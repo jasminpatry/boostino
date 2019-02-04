@@ -17,6 +17,7 @@ bool g_fUserialActive = false;
 
 static const u16 g_nIdTactrix = 0x0403;
 static const u16 g_nIdOpenPort20 = 0xcc4c;
+static const u32 g_msTimeout = 1000;
 
 enum TACTRIXS
 {
@@ -49,7 +50,11 @@ protected:
 
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
+
 	int				CBReceive(u32 msTimeout);
+	bool			FReceive(const char * pChz);
+	bool			FReceivePrefix(const char * pChzPrefix);
+
 	void			FlushIncoming();
 
 	TACTRIXS		m_tactrixs;
@@ -90,6 +95,10 @@ void CTactrix::TraceByte(u8 b)
 			Serial.print("\\n");
 			break;
 
+		case '\0':
+			Serial.print("\\0");
+			break;
+
 		default:
 			Serial.print("\\x");
 			Serial.print(b, HEX);
@@ -110,7 +119,7 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 
 	Trace("Sending ");
 	Trace(cB);
-	Trace(" bytes:\n>>");
+	Trace(" bytes:\no \"");
 
 	for (int iB = 0; iB < cB; ++iB)
 	{
@@ -121,7 +130,7 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 		g_userial.write(b);
 	}
 
-	Trace("\n");
+	Trace("\"\n");
 }
 
 void CTactrix::SendCommand(const char * pChz)
@@ -140,12 +149,12 @@ int CTactrix::CBReceive(u32 msTimeout)
 #if DEBUG
 			Trace("Received ");
 			Trace(m_cBRecv);
-			Trace(" bytes:\n<<");
+			Trace(" bytes:\ni \"");
 			for (int iB = 0; iB < m_cBRecv; ++iB)
 			{
 				TraceByte(m_aBRecv[iB]);
 			}
-			Trace("\n");
+			Trace("\"\n");
 #endif // DEBUG
 
 			return m_cBRecv;
@@ -156,6 +165,52 @@ int CTactrix::CBReceive(u32 msTimeout)
 
 		delayMicroseconds(10);
 	}
+}
+
+bool CTactrix::FReceivePrefix(const char * pChzPrefix)
+{
+	if (CBReceive(g_msTimeout) == 0)
+	{
+		Trace("Timed out waiting for prefix '");
+		Trace(pChzPrefix);
+		Trace("'\n");
+		return false;
+	}
+
+	int cChPrefix = strlen(pChzPrefix);
+
+	if (m_cBRecv < cChPrefix || strncasecmp((const char *)m_aBRecv, pChzPrefix, cChPrefix) != 0)
+	{
+		Trace("Unexpected prefix (expected '");
+		Trace(pChzPrefix);
+		Trace("')\n");
+		return false;
+	}
+
+	return true;
+}
+
+bool CTactrix::FReceive(const char * pChz)
+{
+	if (CBReceive(g_msTimeout) == 0)
+	{
+		Trace("Timed out waiting for reply '");
+		Trace(pChz);
+		Trace("'\n");
+		return false;
+	}
+
+	int cCh = strlen(pChz);
+
+	if (m_cBRecv != cCh || strncasecmp((const char *)m_aBRecv, pChz, cCh) != 0)
+	{
+		Trace("Unexpected reply (expected '");
+		Trace(pChz);
+		Trace("')\n");
+		return false;
+	}
+
+	return true;
 }
 
 void CTactrix::FlushIncoming()
@@ -192,11 +247,90 @@ bool CTactrix::FTryInit()
 		return false;
 	}
 
+	// Only receive one bulk transfer at a time
+
+	g_userial.setTimeout(0);
+
 	FlushIncoming();
 
 	SendCommand("\r\n\r\nati\r\n");
+	if (!FReceivePrefix("ari"))
+		return false;
 
-	CBReceive(1000);
+	SendCommand("ata 2\r\n");
+	if (!FReceive("aro 2\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruConnect:
+	//	protocol = ISO9141 (3),
+	//	flags = ISO9141_NO_CHECKSUM (0x200 or 512)
+	//	baudrate = 4800
+
+	SendCommand("ato3 512 4800 0 3\r\n");
+	if (!FReceive("aro 3\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = P1_MAX (7) -- maximum inter-byte time for ECU responses in ms (default is 20)
+	//	Value = 2
+
+	SendCommand("ats3 7 2 4\r\n");
+	if (!FReceive("aro 4\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = P3_MIN (0xa or 10) -- minimum time between ECU response and start of new tester request in ms (default is 55)
+	//	Value = 0
+
+	SendCommand("ats3 10 0 5\r\n");
+	if (!FReceive("aro 5\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = P4_MIN (0xc or 12) -- minimum inter-byte time for a tester request in ms (default is 5)
+	//	Value = 0
+
+	SendCommand("ats3 12 0 6\r\n");
+	if (!FReceive("aro 6\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = LOOPBACK (3) -- echo transmitted messages in the receive queue (default is OFF (0))
+	//	Value = ON (1)
+
+	SendCommand("ats3 3 1 7\r\n");
+	if (!FReceive("aro 7\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = DATA_BITS (0x20 or 32)
+	//	Value = 8
+
+	SendCommand("ats3 32 8 8\r\n");
+	if (!FReceive("aro 8\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
+	//	Parameter ID = PARITY (0x16 or 22) -- default is NO_PARITY (0)
+	//	Value = NO_PARITY (0)
+	// BB (jasminp) Redundant?
+
+	SendCommand("ats3 22 0 9\r\n");
+	if (!FReceive("aro 9\r\n"))
+		return false;
+
+	// Equivalent to J2534 PassThruStartMsgFilter:
+	//	FilterType = PASS_FILTER (1)
+	//	pMaskMsg->TxFlags = 0
+	//	pMaskMsg->DataSize = 1
+	//	pMaskMsg->Data = "\0"
+	//	pPatternMsg->Data = "\0"
+	//
+	//	This allows all messages through.
+
+	SendCommand((const u8 *)("atf3 1 0 1 10\r\n\0\0"), 17);
+	if (!FReceive("arf3 0 10\r\n"))
+		return false;
 
 	m_tactrixs = TACTRIXS_Connected;
 
@@ -247,7 +381,6 @@ void loop()
 				Serial.printf("  Serial: %s\n", pChz);
 
 			g_userial.begin(USBBAUD);
-			g_userial.setTimeout(0);
 		}
 	}
 
