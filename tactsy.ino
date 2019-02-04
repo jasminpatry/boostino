@@ -17,7 +17,7 @@ bool g_fUserialActive = false;
 
 static const u16 g_nIdTactrix = 0x0403;
 static const u16 g_nIdOpenPort20 = 0xcc4c;
-static const u32 g_msTimeout = 1000;
+static const u32 g_msTimeout = 2000;
 
 enum TACTRIXS
 {
@@ -38,8 +38,9 @@ public:
 					~CTactrix()
 						{ ; }
 
-	bool			FTryInit();
-	void			Update();
+	bool			FTryConnect();
+	void			Disconnect();
+	bool			FTryStartPolling();
 	TACTRIXS		Tactrixs() const
 						{ return m_tactrixs; }
 
@@ -227,13 +228,11 @@ void CTactrix::FlushIncoming()
 	Trace("FlushIncoming done.\n");
 }
 
-bool CTactrix::FTryInit()
+bool CTactrix::FTryConnect()
 {
 	if (m_tactrixs != TACTRIXS_Disconnected)
 	{
-		SendCommand("atz\r\n");
-		FlushIncoming();
-		m_tactrixs = TACTRIXS_Disconnected;
+		Disconnect();
 	}
 
 	if (!g_userial)
@@ -328,13 +327,76 @@ bool CTactrix::FTryInit()
 	//
 	//	This allows all messages through.
 
-	SendCommand((const u8 *)("atf3 1 0 1 10\r\n\0\0"), 17);
+	const u8 aBFilter[] = { "atf3 1 0 1 10\r\n\0\0" };
+	SendCommand(aBFilter, sizeof(aBFilter));
 	if (!FReceive("arf3 0 10\r\n"))
 		return false;
 
 	m_tactrixs = TACTRIXS_Connected;
 
 	return true;
+}
+
+bool CTactrix::FTryStartPolling()
+{
+	if (m_tactrixs != TACTRIXS_Connected)
+		return false;
+
+	// Equivalent to J2534 PassThruWriteMsgs; send SSM init sequence
+
+	const u8 aBSsmInit[] = { "att3 6 0 2000000 11\r\n\x80\x10\xf0\x01\xbf\x40" };
+	SendCommand(aBSsmInit, sizeof(aBSsmInit));
+
+	// Start of loopback message
+
+	if (!FReceivePrefix("ar3\x05\xa0"))
+		return false;
+
+	// Loopback message
+
+	if (!FReceive("ar3\x07 \x80\x10\xf0\x01\xbf\x40"))
+		return false;
+
+	// End of loopback message
+
+	if (!FReceivePrefix("ar3\x05\x60"))
+		return false;
+
+	// Acknowledgement
+
+	if (!FReceive("aro 11\r\n"))
+		return false;
+
+	// Start of normal message
+
+	if (!FReceivePrefix("ar3\x05\x80"))
+		return false;
+
+	return true;
+}
+
+void CTactrix::Disconnect()
+{
+	if (m_tactrixs == TACTRIXS_Disconnected)
+		return;
+
+	if (m_tactrixs == TACTRIXS_Connected)
+	{
+		// Equivalent to J2534 PassThruStopMsgFilter
+
+		SendCommand("atk3 0 12\r\n");
+		(void) FReceive("aro 12\r\n");
+
+		// Equivalent to J2534 PassThruDisconnect
+
+		SendCommand("atc3 13\r\n");
+		(void) FReceive("aro 13\r\n");
+	}
+
+	SendCommand("atz 14\r\n");
+	(void) FReceive("aro 14\r\n");
+
+	m_tactrixs = TACTRIXS_Disconnected;
 }
 
 CTactrix g_tactrix;
@@ -385,7 +447,17 @@ void loop()
 	}
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
-		g_tactrix.FTryInit();
+	{
+		g_tactrix.FTryConnect();
+	}
+
+	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
+	{
+		if (!g_tactrix.FTryStartPolling())
+		{
+			g_tactrix.Disconnect();
+		}
+	}
 
 	if (Serial.available())
 	{
