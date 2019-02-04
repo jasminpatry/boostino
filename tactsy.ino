@@ -47,7 +47,8 @@ public:
 protected:
 	void			Trace(const char * pChz);
 	void			Trace(int n, int mode = DEC);
-	void			TraceByte(u8 b);
+	void			Trace(u8 b, int mode = DEC);
+	void			Trace(char c);
 
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
@@ -77,16 +78,23 @@ void CTactrix::Trace(int n, int mode)
 #endif // DEBUG
 }
 
-void CTactrix::TraceByte(u8 b)
+void CTactrix::Trace(u8 b, int mode)
 {
 #if DEBUG
-	if (isprint(b))
+	Serial.print(b, mode);
+#endif // DEBUG
+}
+
+void CTactrix::Trace(char c)
+{
+#if DEBUG
+	if (isprint(c))
 	{
-		Serial.print((char)b);
+		Serial.print(c);
 	}
 	else
 	{
-		switch (b)
+		switch (c)
 		{
 		case '\r':
 			Serial.print("\\r");
@@ -102,7 +110,7 @@ void CTactrix::TraceByte(u8 b)
 
 		default:
 			Serial.print("\\x");
-			Serial.print(b, HEX);
+			Serial.print(u8(c), HEX);
 			break;
 		}
 	}
@@ -126,7 +134,7 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 	{
 		u8 b = aB[iB];
 
-		TraceByte(b);
+		Trace(char(b));
 
 		g_userial.write(b);
 	}
@@ -152,9 +160,7 @@ int CTactrix::CBReceive(u32 msTimeout)
 			Trace(m_cBRecv);
 			Trace(" bytes:\ni \"");
 			for (int iB = 0; iB < m_cBRecv; ++iB)
-			{
-				TraceByte(m_aBRecv[iB]);
-			}
+				Trace(char(m_aBRecv[iB]));
 			Trace("\"\n");
 #endif // DEBUG
 
@@ -170,21 +176,23 @@ int CTactrix::CBReceive(u32 msTimeout)
 
 bool CTactrix::FReceivePrefix(const char * pChzPrefix)
 {
+	int cChPrefix = strlen(pChzPrefix);
+
 	if (CBReceive(g_msTimeout) == 0)
 	{
-		Trace("Timed out waiting for prefix '");
-		Trace(pChzPrefix);
-		Trace("'\n");
+		Trace("Timed out waiting for prefix \"");
+		for (int iCh = 0; iCh < cChPrefix; ++iCh)
+			Trace(pChzPrefix[iCh]);
+		Trace("\"\n");
 		return false;
 	}
 
-	int cChPrefix = strlen(pChzPrefix);
-
 	if (m_cBRecv < cChPrefix || strncasecmp((const char *)m_aBRecv, pChzPrefix, cChPrefix) != 0)
 	{
-		Trace("Unexpected prefix (expected '");
-		Trace(pChzPrefix);
-		Trace("')\n");
+		Trace("Unexpected prefix (expected \"");
+		for (int iCh = 0; iCh < cChPrefix; ++iCh)
+			Trace(pChzPrefix[iCh]);
+		Trace("\")\n");
 		return false;
 	}
 
@@ -193,21 +201,23 @@ bool CTactrix::FReceivePrefix(const char * pChzPrefix)
 
 bool CTactrix::FReceive(const char * pChz)
 {
+	int cCh = strlen(pChz);
+
 	if (CBReceive(g_msTimeout) == 0)
 	{
-		Trace("Timed out waiting for reply '");
-		Trace(pChz);
-		Trace("'\n");
+		Trace("Timed out waiting for reply \"");
+		for (int iCh = 0; iCh < cCh; ++iCh)
+			Trace(pChz[iCh]);
+		Trace("\"\n");
 		return false;
 	}
 
-	int cCh = strlen(pChz);
-
 	if (m_cBRecv != cCh || strncasecmp((const char *)m_aBRecv, pChz, cCh) != 0)
 	{
-		Trace("Unexpected reply (expected '");
-		Trace(pChz);
-		Trace("')\n");
+		Trace("Unexpected reply (expected \"");
+		for (int iCh = 0; iCh < cCh; ++iCh)
+			Trace(pChz[iCh]);
+		Trace("\")\n");
 		return false;
 	}
 
@@ -222,7 +232,7 @@ void CTactrix::FlushIncoming()
 	{
 		u8 b = g_userial.read();
 
-		TraceByte(b);
+		Trace(char(b));
 	}
 
 	Trace("FlushIncoming done.\n");
@@ -372,6 +382,42 @@ bool CTactrix::FTryStartPolling()
 	if (!FReceivePrefix("ar3\x05\x80"))
 		return false;
 
+	u8 aBSsmInitReply[255];
+	u8 cBSsmInitReply = 0;
+
+	while (!FReceivePrefix("ar3\x05\x40"))
+	{
+		if (m_cBRecv < 6 ||
+			strncasecmp((const char *)m_aBRecv, "ar3", 3) != 0 ||
+			m_aBRecv[4] != 0)
+		{
+			Trace("Malformed SSM Init reply\n");
+			return false;
+		}
+
+		u8 cBMsg = m_aBRecv[3] - 1;
+		if (cBSsmInitReply + cBMsg > sizeof(aBSsmInitReply))
+		{
+			Trace("Overflow of SSM init reply buffer");
+			return false;
+		}
+		else if (cBMsg + 5 > m_cBRecv)
+		{
+			Trace("Incomplete SSM init message");
+			return false;
+		}
+		else
+		{
+			memcpy(&aBSsmInitReply[cBSsmInitReply], &m_aBRecv[5], cBMsg);
+			cBSsmInitReply += cBMsg;
+		}
+	}
+
+	Trace("SSM Init Reply: ");
+	for (int iB = 0; iB < cBSsmInitReply; ++iB)
+		Trace(aBSsmInitReply[iB]);
+	Trace("\n");
+
 	return true;
 }
 
@@ -448,7 +494,8 @@ void loop()
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
 	{
-		g_tactrix.FTryConnect();
+		if (!g_tactrix.FTryConnect())
+			delay(g_msTimeout);
 	}
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
@@ -456,6 +503,7 @@ void loop()
 		if (!g_tactrix.FTryStartPolling())
 		{
 			g_tactrix.Disconnect();
+			delay(g_msTimeout);
 		}
 	}
 
