@@ -32,7 +32,9 @@ public:
 					CTactrix()
 					: m_tactrixs(TACTRIXS_Disconnected),
 					  m_aBRecv(),
-					  m_cBRecv(0)
+					  m_cBRecv(0),
+					  m_iBRecv(0),
+					  m_iBRecvPrev(0)
 						{ ; }
 
 					~CTactrix()
@@ -54,14 +56,41 @@ protected:
 	void			SendCommand(const char * pChz);
 
 	int				CBReceive(u32 msTimeout);
-	bool			FReceive(const char * pChz);
-	bool			FReceivePrefix(const char * pChzPrefix);
+	void			ResetReceive();
+	bool			FReceiveMessage(const char * pChz);
+	int				CBMessage()
+						{ return m_iBRecv - m_iBRecvPrev; }
+	u8 *			PBMessage()
+						{ return &m_aBRecv[m_iBRecvPrev]; }
+	int				CBRemaining()
+						{ return m_cBRecv - m_iBRecv; }
+	u8 *			PBRemaining()
+						{ return &m_aBRecv[m_iBRecv]; }
+
+	enum MSGK
+	{
+		MSGK_InfoReply,
+		MSGK_LoopbackStart,
+		MSGK_Loopback,
+		MSGK_LoopbackEnd,
+		MSGK_ReplyStart,
+		MSGK_Reply,
+		MSGK_ReplyEnd,
+
+		MSGK_Max,
+		MSGK_Min = 0,
+		MSGK_Nil = -1
+	};
+
+	bool			FReceiveMessage(MSGK msgk);
 
 	void			FlushIncoming();
 
 	TACTRIXS		m_tactrixs;
 	u8				m_aBRecv[4096];
 	int				m_cBRecv;
+	int				m_iBRecv;
+	int				m_iBRecvPrev;
 };
 
 void CTactrix::Trace(const char * pChz)
@@ -149,6 +178,8 @@ void CTactrix::SendCommand(const char * pChz)
 
 int CTactrix::CBReceive(u32 msTimeout)
 {
+	ResetReceive();
+
 	if (!g_userial)
 	{
 		Trace("CBReceive: Can't receive, not connected\n");
@@ -181,54 +212,69 @@ int CTactrix::CBReceive(u32 msTimeout)
 	}
 }
 
-bool CTactrix::FReceivePrefix(const char * pChzPrefix)
+void CTactrix::ResetReceive()
 {
-	int cChPrefix = strlen(pChzPrefix);
-
-	if (CBReceive(g_msTimeout) == 0)
-	{
-		Trace("Timed out waiting for prefix \"");
-		for (int iCh = 0; iCh < cChPrefix; ++iCh)
-			Trace(pChzPrefix[iCh]);
-		Trace("\"\n");
-		return false;
-	}
-
-	if (m_cBRecv < cChPrefix || strncasecmp((const char *)m_aBRecv, pChzPrefix, cChPrefix) != 0)
-	{
-		Trace("Unexpected prefix (expected \"");
-		for (int iCh = 0; iCh < cChPrefix; ++iCh)
-			Trace(pChzPrefix[iCh]);
-		Trace("\")\n");
-		return false;
-	}
-
-	return true;
+	m_cBRecv = 0;
+	m_iBRecv = 0;
+	m_iBRecvPrev = 0;
 }
 
-bool CTactrix::FReceive(const char * pChz)
+bool CTactrix::FReceiveMessage(const char * pChz)
 {
 	int cCh = strlen(pChz);
 
-	if (CBReceive(g_msTimeout) == 0)
+	if (CBRemaining() == 0)
 	{
-		Trace("Timed out waiting for reply \"");
-		for (int iCh = 0; iCh < cCh; ++iCh)
-			Trace(pChz[iCh]);
-		Trace("\"\n");
-		return false;
+		if (CBReceive(g_msTimeout) == 0)
+		{
+			Trace("Timed out waiting for reply \"");
+			for (int iCh = 0; iCh < cCh; ++iCh)
+				Trace(pChz[iCh]);
+			Trace("\"\n");
+			return false;
+		}
 	}
 
-	if (m_cBRecv != cCh || strncasecmp((const char *)m_aBRecv, pChz, cCh) != 0)
+	if (CBRemaining() < cCh ||
+		strncasecmp((const char *)PBRemaining(), pChz, cCh) != 0)
 	{
 		Trace("Unexpected reply (expected \"");
 		for (int iCh = 0; iCh < cCh; ++iCh)
 			Trace(pChz[iCh]);
 		Trace("\")\n");
+
 		return false;
 	}
 
+	m_iBRecvPrev = m_iBRecv;
+	m_iBRecv += cCh;
+
 	return true;
+}
+
+bool CTactrix::FReceiveMessage(MSGK msgk)
+{
+	// MSGK_LoopbackStart: "ar3\x05\xa0"
+	// MSGK_Loopback: "ar3\x07\x20"
+	// MSGK_LoopbackEnd: "ar3\x05\x60"
+	// MSGK_ReplyStart: "ar3\x05\x80"
+	// MSGK_ReplyEnd: "ar3\x05\x40"
+
+	// MSGK_Reply checks:
+	// if (cBMsg < 6 ||
+	// 	strncasecmp((const char *)PBMessage(), "ar3", 3) != 0 ||
+	// 	pBMsg[4] != 0)
+	// {
+	// 	Trace("Malformed SSM Init reply\n");
+	// 	return false;
+	// }
+	// else if (cBFragment + 5 > cBMsg)
+	// {
+	// 	Trace("Incomplete SSM init message");
+	// 	return false;
+	// }
+
+	return false; // &&&
 }
 
 void CTactrix::FlushIncoming()
@@ -270,11 +316,11 @@ bool CTactrix::FTryConnect()
 	FlushIncoming();
 
 	SendCommand("\r\n\r\nati\r\n");
-	if (!FReceivePrefix("ari"))
+	if (!FReceiveMessage(MSGK_InfoReply))
 		return false;
 
 	SendCommand("ata 2\r\n");
-	if (!FReceive("aro 2\r\n"))
+	if (!FReceiveMessage("aro 2\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruConnect:
@@ -283,7 +329,7 @@ bool CTactrix::FTryConnect()
 	//	baudrate = 4800
 
 	SendCommand("ato3 512 4800 0 3\r\n");
-	if (!FReceive("aro 3\r\n"))
+	if (!FReceiveMessage("aro 3\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -291,7 +337,7 @@ bool CTactrix::FTryConnect()
 	//	Value = 2
 
 	SendCommand("ats3 7 2 4\r\n");
-	if (!FReceive("aro 4\r\n"))
+	if (!FReceiveMessage("aro 4\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -299,7 +345,7 @@ bool CTactrix::FTryConnect()
 	//	Value = 0
 
 	SendCommand("ats3 10 0 5\r\n");
-	if (!FReceive("aro 5\r\n"))
+	if (!FReceiveMessage("aro 5\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -307,7 +353,7 @@ bool CTactrix::FTryConnect()
 	//	Value = 0
 
 	SendCommand("ats3 12 0 6\r\n");
-	if (!FReceive("aro 6\r\n"))
+	if (!FReceiveMessage("aro 6\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -315,7 +361,7 @@ bool CTactrix::FTryConnect()
 	//	Value = ON (1)
 
 	SendCommand("ats3 3 1 7\r\n");
-	if (!FReceive("aro 7\r\n"))
+	if (!FReceiveMessage("aro 7\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -323,7 +369,7 @@ bool CTactrix::FTryConnect()
 	//	Value = 8
 
 	SendCommand("ats3 32 8 8\r\n");
-	if (!FReceive("aro 8\r\n"))
+	if (!FReceiveMessage("aro 8\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
@@ -332,7 +378,7 @@ bool CTactrix::FTryConnect()
 	// BB (jasminp) Redundant?
 
 	SendCommand("ats3 22 0 9\r\n");
-	if (!FReceive("aro 9\r\n"))
+	if (!FReceiveMessage("aro 9\r\n"))
 		return false;
 
 	// Equivalent to J2534 PassThruStartMsgFilter:
@@ -346,7 +392,7 @@ bool CTactrix::FTryConnect()
 
 	const u8 aBFilter[] = { "atf3 1 0 1 10\r\n\0\0" };
 	SendCommand(aBFilter, sizeof(aBFilter) - 1);
-	if (!FReceive("arf3 0 10\r\n"))
+	if (!FReceiveMessage("arf3 0 10\r\n"))
 		return false;
 
 	m_tactrixs = TACTRIXS_Connected;
@@ -366,57 +412,50 @@ bool CTactrix::FTryStartPolling()
 
 	// Start of loopback message
 
-	if (!FReceivePrefix("ar3\x05\xa0"))
+	if (!FReceiveMessage(MSGK_LoopbackStart))
 		return false;
 
 	// Loopback message
 
-	if (!FReceive("ar3\x07 \x80\x10\xf0\x01\xbf\x40"))
+	if (!FReceiveMessage("ar3\x07 \x80\x10\xf0\x01\xbf\x40"))
 		return false;
 
 	// End of loopback message
 
-	if (!FReceivePrefix("ar3\x05\x60"))
+	if (!FReceiveMessage(MSGK_LoopbackEnd))
 		return false;
 
 	// Acknowledgement
 
-	if (!FReceive("aro 11\r\n"))
+	if (!FReceiveMessage("aro 11\r\n"))
 		return false;
 
 	// Start of normal message
 
-	if (!FReceivePrefix("ar3\x05\x80"))
+	if (!FReceiveMessage(MSGK_ReplyStart))
 		return false;
 
 	u8 aBSsmInitReply[255];
 	u8 cBSsmInitReply = 0;
 
-	while (!FReceivePrefix("ar3\x05\x40"))
+	while (!FReceiveMessage(MSGK_ReplyEnd))
 	{
-		if (m_cBRecv < 6 ||
-			strncasecmp((const char *)m_aBRecv, "ar3", 3) != 0 ||
-			m_aBRecv[4] != 0)
-		{
-			Trace("Malformed SSM Init reply\n");
+		if (CBRemaining() == 0 || !FReceiveMessage(MSGK_Reply))
 			return false;
-		}
 
-		u8 cBMsg = m_aBRecv[3] - 1;
-		if (cBSsmInitReply + cBMsg > sizeof(aBSsmInitReply))
+		u8 * pBMsg = PBMessage();
+		int cBMsg = CBMessage();
+
+		u8 cBFragment = pBMsg[3] - 1;
+		if (cBSsmInitReply + cBFragment > sizeof(aBSsmInitReply))
 		{
 			Trace("Overflow of SSM init reply buffer");
 			return false;
 		}
-		else if (cBMsg + 5 > m_cBRecv)
-		{
-			Trace("Incomplete SSM init message");
-			return false;
-		}
 		else
 		{
-			memcpy(&aBSsmInitReply[cBSsmInitReply], &m_aBRecv[5], cBMsg);
-			cBSsmInitReply += cBMsg;
+			memcpy(&aBSsmInitReply[cBSsmInitReply], &pBMsg[5], cBFragment);
+			cBSsmInitReply += cBFragment;
 		}
 	}
 
@@ -438,16 +477,16 @@ void CTactrix::Disconnect()
 		// Equivalent to J2534 PassThruStopMsgFilter
 
 		SendCommand("atk3 0 12\r\n");
-		(void) FReceive("aro 12\r\n");
+		(void) FReceiveMessage("aro 12\r\n");
 
 		// Equivalent to J2534 PassThruDisconnect
 
 		SendCommand("atc3 13\r\n");
-		(void) FReceive("aro 13\r\n");
+		(void) FReceiveMessage("aro 13\r\n");
 	}
 
 	SendCommand("atz 14\r\n");
-	(void) FReceive("aro 14\r\n");
+	(void) FReceiveMessage("aro 14\r\n");
 
 	m_tactrixs = TACTRIXS_Disconnected;
 }
