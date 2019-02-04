@@ -121,7 +121,7 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 {
 	if (!g_userial)
 	{
-		Trace("SendCommand: Can't send, not connected");
+		Trace("SendCommand: Can't send, not connected\n");
 		m_tactrixs = TACTRIXS_Disconnected;
 		return;
 	}
@@ -149,6 +149,13 @@ void CTactrix::SendCommand(const char * pChz)
 
 int CTactrix::CBReceive(u32 msTimeout)
 {
+	if (!g_userial)
+	{
+		Trace("CBReceive: Can't receive, not connected\n");
+		m_tactrixs = TACTRIXS_Disconnected;
+		return 0;
+	}
+
 	u32 msStart = millis();
 	for (;;)
 	{
@@ -338,7 +345,7 @@ bool CTactrix::FTryConnect()
 	//	This allows all messages through.
 
 	const u8 aBFilter[] = { "atf3 1 0 1 10\r\n\0\0" };
-	SendCommand(aBFilter, sizeof(aBFilter));
+	SendCommand(aBFilter, sizeof(aBFilter) - 1);
 	if (!FReceive("arf3 0 10\r\n"))
 		return false;
 
@@ -355,7 +362,7 @@ bool CTactrix::FTryStartPolling()
 	// Equivalent to J2534 PassThruWriteMsgs; send SSM init sequence
 
 	const u8 aBSsmInit[] = { "att3 6 0 2000000 11\r\n\x80\x10\xf0\x01\xbf\x40" };
-	SendCommand(aBSsmInit, sizeof(aBSsmInit));
+	SendCommand(aBSsmInit, sizeof(aBSsmInit) - 1);
 
 	// Start of loopback message
 
@@ -470,6 +477,7 @@ void loop()
 		if (g_fUserialActive)
 		{
 			Serial.printf("*** Device - disconnected ***\n");
+			g_fUserialActive = false;
 		}
 		else
 		{
@@ -521,4 +529,6 @@ void loop()
 	{
 		Serial.write(g_userial.read());
 	}
+
+	Serial.flush();
 }
