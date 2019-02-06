@@ -89,6 +89,7 @@ protected:
 	void			Trace(int n, int mode = DEC);
 	void			Trace(u8 b, int mode = DEC);
 	void			Trace(char c);
+	void			TraceHex(const u8 * aB, u16 cB);
 
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
@@ -169,6 +170,28 @@ void CTactrix::Trace(char c)
 		}
 	}
 #endif // DEBUG
+}
+
+void CTactrix::TraceHex(const u8 * aB, u16 cB)
+{
+	int iB = 0;
+	for (;;)
+	{
+		u8 b = aB[iB];
+		if (b < 0x10)
+			Trace('0');
+		Trace(b, HEX);
+
+		++iB;
+		if (iB >= cB)
+			break;
+
+		if (!(iB & 0x3))
+			Trace(' ');
+		if (!(iB & 0xf))
+			Trace("\n");
+	}
+	Trace("\n");
 }
 
 void CTactrix::SendCommand(const u8 * aB, u16 cB)
@@ -585,8 +608,7 @@ bool CTactrix::FTryStartPolling()
 	}
 
 	Trace("SSM Init Reply: ");
-	for (int iB = 0; iB < cBSsmInitReply; ++iB)
-		Trace(aBSsmInitReply[iB], HEX);
+	TraceHex(aBSsmInitReply, cBSsmInitReply);
 	Trace("\n");
 
 	m_tactrixs = TACTRIXS_Polling;
