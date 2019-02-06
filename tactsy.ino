@@ -263,11 +263,6 @@ bool CTactrix::FTryReceiveMessage(const char * pChz)
 	if (CBRemaining() < cCh ||
 		strncmp((const char *)PBRemaining(), pChz, cCh) != 0)
 	{
-		Trace("FTryReceiveMessage got unexpected reply (expected \"");
-		for (int iCh = 0; iCh < cCh; ++iCh)
-			Trace(pChz[iCh]);
-		Trace("\")\n");
-
 		return false;
 	}
 
@@ -282,6 +277,15 @@ bool CTactrix::FMustReceiveMessage(const char * pChz)
 	if (!FTryReceiveMessage(pChz))
 	{
 		ResetReceive();
+
+#if DEBUG
+		Trace("FMustReceiveMessage got unexpected reply (expected \"");
+		int cCh = strlen(pChz);
+		for (int iCh = 0; iCh < cCh; ++iCh)
+			Trace(pChz[iCh]);
+		Trace("\")\n");
+#endif // DEBUG
+
 		return false;
 	}
 
@@ -326,7 +330,7 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 				pBRem[1] != 'r' ||
 				pBRem[2] != 'i')
 			{
-				goto LFReceiveError;
+				return false;
 			}
 
 			bool fFoundCrLf = false;
@@ -342,7 +346,7 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 			}
 
 			if (!fFoundCrLf)
-				goto LFReceiveError;
+				return false;
 		}
 		break;
 
@@ -359,7 +363,7 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 				!isdigit(pBRem[2]) ||
 				pBRem[4] != s_mpMsgkBType[msgk])
 			{
-				goto LFReceiveError;
+				return false;
 			}
 
 			cBMsg = 4 + pBRem[3];
@@ -367,22 +371,20 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 		break;
 
 	default:
-		goto LFReceiveError;
+		Trace("FTryReceiveMessage called with invalid msgk\n");
+		return false;
 	}
 
 	if (cBMsg > cBRem)
-		goto LFReceiveError;
+	{
+		Trace("FTryReceiveMessage received malformed message (cBMsg > cBRem)\n");
+		return false;
+	}
 
 	m_iBRecvPrev = m_iBRecv;
 	m_iBRecv += cBMsg;
 
 	return true;
-
-LFReceiveError:
-	Trace("FTryReceiveMessage failed for message type ");
-	Trace(g_mpMsgkPChz[msgk]);
-	Trace("\n");
-	return false;
 }
 
 bool CTactrix::FMustReceiveMessage(MSGK msgk)
@@ -390,6 +392,11 @@ bool CTactrix::FMustReceiveMessage(MSGK msgk)
 	if (!FTryReceiveMessage(msgk))
 	{
 		ResetReceive();
+
+		Trace("FMustReceiveMessage failed for message type ");
+		Trace(g_mpMsgkPChz[msgk]);
+		Trace("\n");
+
 		return false;
 	}
 
@@ -579,8 +586,10 @@ bool CTactrix::FTryStartPolling()
 
 	Trace("SSM Init Reply: ");
 	for (int iB = 0; iB < cBSsmInitReply; ++iB)
-		Trace(aBSsmInitReply[iB]);
+		Trace(aBSsmInitReply[iB], HEX);
 	Trace("\n");
+
+	m_tactrixs = TACTRIXS_Polling;
 
 	return true;
 }
