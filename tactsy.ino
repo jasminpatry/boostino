@@ -1048,6 +1048,9 @@ bool CTactrix::FTryUpdatePolling()
 
 	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
 
+	if (!FMustReceiveMessage(MSGK_ReplyEnd))
+		return false;
+
 	return true;
 }
 
@@ -1190,20 +1193,22 @@ void loop()
 			delay(s_msTimeout);
 		}
 	}
-
-	if (Serial.available())
+	else
 	{
-		while (Serial.available())
+		if (Serial.available())
 		{
-			int ch = Serial.read();
-			Serial.write(ch);
-			g_userial.write(ch);
+			while (Serial.available())
+			{
+				int ch = Serial.read();
+				Serial.write(ch);
+				g_userial.write(ch);
+			}
 		}
-	}
 
-	while (g_userial.available())
-	{
-		Serial.write(g_userial.read());
+		while (g_userial.available())
+		{
+			Serial.write(g_userial.read());
+		}
 	}
 
 	Serial.flush();
