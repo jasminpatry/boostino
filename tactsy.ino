@@ -1,11 +1,21 @@
-// Simple test of USB Host Mouse/Keyboard
-//
-// This example is in the public domain
+// Tactsy -- A Simple Tactrix OP 2.0 <-> Teensy 3.6 Interface. Pronounced "taxi".
+// Copyright (c) 2019 Jasmin Patry
 
-#include "USBHost_t36.h"
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <SPI.h>
+#include <USBHost_t36.h>
+#include <Wire.h>
+
+
+
+// Set to 1 to enable verbose USB serial logging.
 
 #define DEBUG 1
-#define USBBAUD 115200
+
+
+
+// Useful macros, typedefs, etc.
 
 #define CASSERT(f) static_assert(f, #f)
 
@@ -23,7 +33,8 @@ typedef int16_t		s16;
 typedef uint8_t		u8;
 typedef int8_t		s8;
 
-CASSERT(sizeof(int) == sizeof(s32));
+CASSERT(sizeof(int) == 4);		// Teensy 3.6 is 32-bit
+CASSERT(sizeof(void *) == 4);	//	...
 
 
 
@@ -1125,14 +1136,32 @@ void CTactrix::Disconnect()
 CTactrix g_tactrix;
 
 
+// OLED Display Configuration
+
+static const int s_dXScreen = 128;
+static const int s_dYScreen = 32;
+static const int s_nPinOledReset = -1;	// share Arduino reset pin
+static const u8 s_bI2cAddrOled = 0x3c;
+
+Adafruit_SSD1306 g_oled(s_dXScreen, s_dYScreen, &Wire, s_nPinOledReset);
+
+
 
 void setup()
 {
+	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
+		Serial.println(F("SSD1306 allocation failed"));
+
 	while (!Serial && (millis() < 5000))
 		(void) 0; // wait for Arduino Serial Monitor
 
-	Serial.println("\n\nUSB Host Testing - Serial");
+	Serial.println(F("\n\nTactsy 0.1"));
 	g_uhost.begin();
+
+	g_oled.display();
+	delay(2000); // Pause for 2 seconds
+	g_oled.clearDisplay();
+	g_oled.display();
 }
 
 void loop()
@@ -1146,7 +1175,7 @@ void loop()
 	{
 		if (g_fUserialActive)
 		{
-			Serial.printf("*** Device - disconnected ***\n");
+			Serial.printf(F("*** Device - disconnected ***\n"));
 			g_fUserialActive = false;
 		}
 		else
@@ -1166,7 +1195,8 @@ void loop()
 			if (pChz && *pChz)
 				Serial.printf("  Serial: %s\n", pChz);
 
-			g_userial.begin(USBBAUD);
+			static const int s_nUsbBaud = 115200;
+			g_userial.begin(s_nUsbBaud);
 		}
 	}
 
