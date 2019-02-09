@@ -13,6 +13,10 @@
 
 #define DEBUG 1
 
+// Set to 1 to test without being plugged into the vehicle
+
+#define TEST_OFFLINE 0
+
 
 
 // Useful macros, typedefs, etc.
@@ -451,6 +455,7 @@ public:
 	bool			FTryUpdatePolling();
 	TACTRIXS		Tactrixs() const
 						{ return m_tactrixs; }
+	float			GParam(PARAM param) const;
 
 protected:
 	void			SendCommand(const u8 * aB, u16 cB);
@@ -842,7 +847,6 @@ bool CTactrix::FTryStartPolling()
 	const u8 aBSsmInit[] = { "att3 6 0 2000000 11\r\n\x80\x10\xf0\x01\xbf\x40" };
 	SendCommand(aBSsmInit, sizeof(aBSsmInit) - 1);
 
-#define TEST_OFFLINE 0
 #if !TEST_OFFLINE
 	// Start of loopback message
 
@@ -996,6 +1000,7 @@ bool CTactrix::FTryUpdatePolling()
 	if (m_tactrixs != TACTRIXS_Polling)
 		return false;
 
+#if !TEST_OFFLINE
 	bool fReceivedReply = false;
 	for (int i = 0; i < 10; ++i)
 	{
@@ -1062,7 +1067,33 @@ bool CTactrix::FTryUpdatePolling()
 	if (!FMustReceiveMessage(MSGK_ReplyEnd))
 		return false;
 
+#else // TEST_OFFLINE
+
+	// Dummy boost values to test gauge
+
+	float gBoost = -10.0f + 30.0f * (-sinf(millis() / 2000.0f) * 0.5f + 0.5f);
+	SIntFloat ng;
+	ng.m_g = gBoost;
+	m_mpParamNValue[PARAM_Boost] = ng.m_n;
+
+	float uIam = 1.0f;
+	ng.m_g = uIam;
+	m_mpParamNValue[PARAM_Iam] = ng.m_n;
+
+	float degFbkc = ((millis() & 0xffc) == 0) ? -1.4f : 0.0f;
+	ng.m_g = degFbkc;
+	m_mpParamNValue[PARAM_Fbkc] = ng.m_n;
+#endif // TEST_OFFLINE
+
 	return true;
+}
+
+float CTactrix::GParam(PARAM param) const
+{
+	ASSERT(s_mpParamFIsFloat[param]);
+	SIntFloat ng;
+	ng.m_n = m_mpParamNValue[param];
+	return ng.m_g;
 }
 
 void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
@@ -1158,9 +1189,11 @@ void setup()
 	Serial.println(F("\n\nTactsy 0.1"));
 	g_uhost.begin();
 
-	g_oled.display();
-	delay(2000); // Pause for 2 seconds
 	g_oled.clearDisplay();
+	g_oled.setTextSize(1);
+	g_oled.setTextColor(WHITE);
+	g_oled.setCursor(0, 0);
+	g_oled.cp437(true);
 	g_oled.display();
 }
 
@@ -1175,8 +1208,13 @@ void loop()
 	{
 		if (g_fUserialActive)
 		{
-			Serial.printf(F("*** Device - disconnected ***\n"));
+			Serial.print(F("*** Device - disconnected ***\n"));
 			g_fUserialActive = false;
+
+			g_oled.clearDisplay();
+			g_oled.setCursor(0, 0);
+			g_oled.println(F("No Device"));
+			g_oled.display();
 		}
 		else
 		{
@@ -1202,14 +1240,26 @@ void loop()
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
 	{
-		if (!g_tactrix.FTryConnect())
+		if (g_userial && !g_tactrix.FTryConnect())
+		{
+			g_oled.clearDisplay();
+			g_oled.setCursor(0, 0);
+			g_oled.println(F("Connect Failed"));
+			g_oled.display();
+
 			delay(s_msTimeout);
+		}
 	}
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
 	{
 		if (!g_tactrix.FTryStartPolling())
 		{
+			g_oled.clearDisplay();
+			g_oled.setCursor(0, 0);
+			g_oled.println(F("StartPolling Failed"));
+			g_oled.display();
+
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
 		}
@@ -1217,8 +1267,89 @@ void loop()
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Polling)
 	{
-		if (!g_tactrix.FTryUpdatePolling())
+		if (g_tactrix.FTryUpdatePolling())
 		{
+			g_oled.clearDisplay();
+			g_oled.setCursor(4, 4);
+
+			static float s_gBoostMax = -1000.0f;
+			float gBoost = g_tactrix.GParam(PARAM_Boost);
+			s_gBoostMax = max(gBoost, s_gBoostMax);
+			g_oled.printf("%4.1f (max %4.1f)", gBoost, s_gBoostMax);
+
+			static const float s_gBoostDisplayMin = -10.0f;
+			static const float s_gBoostDisplayMax = 22.0f;
+			float uBoost = (gBoost - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
+			int dXBoost = int(s_dXScreen * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
+			static const int s_dYBoost = 15;
+			g_oled.fillRect(0, 0, dXBoost, s_dYBoost, INVERSE);
+
+			float uBoostMax = (s_gBoostMax - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
+			int xBoostMax = int(s_dXScreen * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
+
+			g_oled.drawFastVLine(xBoostMax, 0, s_dYBoost, INVERSE);
+
+			g_oled.setCursor(0, 16);
+
+			static float s_degFbkcMin = 1000.0f;
+			float degFbkc = g_tactrix.GParam(PARAM_Fbkc);
+			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
+
+			static float s_degFlkcMin = 1000.0f;
+			float degFlkc = g_tactrix.GParam(PARAM_Flkc);
+			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
+
+			static float s_uIamMin = 1.0f;
+			float uIam = g_tactrix.GParam(PARAM_Iam);
+			s_uIamMin = min(uIam, s_uIamMin);
+
+			if (s_uIamMin < 1.0f)
+			{
+				if (uIam < 1.0f)
+					g_oled.setTextColor(BLACK, WHITE);
+				g_oled.printf(
+						F("IAM:%4.2f (min %4.2f)\n"),
+						uIam,
+						s_uIamMin);
+
+				g_oled.setTextColor(WHITE);
+			}
+
+			if (s_degFlkcMin < 0.0f)
+			{
+				if (degFlkc < 0.0f)
+					g_oled.setTextColor(BLACK, WHITE);
+
+				g_oled.printf(
+						F("FLKC:%4.2f (min %4.2f)"),
+						degFlkc,
+						s_degFlkcMin);
+
+				g_oled.setTextColor(WHITE);
+			}
+
+			if (s_degFbkcMin < 0.0f)
+			{
+				if (degFbkc < 0.0f)
+					g_oled.setTextColor(BLACK, WHITE);
+
+				g_oled.printf(
+						F("FBKC:%4.2f (min %4.2f)"),
+						degFbkc,
+						s_degFbkcMin);
+
+				g_oled.setTextColor(WHITE);
+			}
+
+			g_oled.display();
+		}
+		else
+		{
+			g_oled.clearDisplay();
+			g_oled.setCursor(0, 0);
+			g_oled.println(F("UpdatePolling Failed"));
+			g_oled.display();
+
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
 		}
