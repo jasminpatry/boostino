@@ -16,9 +16,228 @@ constexpr int DIM(T (&aT)[N])
 	return N;
 }
 
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t u8;
+typedef uint32_t	u32;
+typedef int32_t		s32;
+typedef uint16_t	u16;
+typedef int16_t		s16;
+typedef uint8_t		u8;
+typedef int8_t		s8;
+
+CASSERT(sizeof(int) == sizeof(s32));
+
+
+
+// Available ECU parameters
+
+enum PARAM
+{
+	PARAM_Fbkc,
+	PARAM_Flkc,
+	PARAM_Boost,
+	PARAM_Iam,
+
+	PARAM_Max,
+	PARAM_Min = 0,
+	PARAM_Nil
+};
+
+PARAM & operator++(PARAM & param)
+{
+	param = PARAM(param + 1);
+	return param;
+}
+
+static const char * s_mpParamPChz[] =
+{
+	"FBKC",						// PARAM_Fbkc
+	"FLKC",						// PARAM_Flkc
+	"Boost",					// PARAM_Boost
+	"IAM",						// PARAM_Iam
+};
+CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
+
+static const u8 s_cBSsmAddr = 3;
+static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
+{
+	{ 0xff, 0x81, 0xfc },		// PARAM_Fbkc
+	{ 0xff, 0x82, 0x98 },		// PARAM_Flkc
+	{ 0xff, 0x62, 0x28 },		// PARAM_Boost
+	{ 0xff, 0x32, 0x9C },		// PARAM_Iam
+};
+CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
+
+static const u8 s_mpParamCB[] =
+{
+	 4,							// PARAM_Fbkc
+	 4,							// PARAM_Flkc
+	 4,							// PARAM_Boost
+	 4,							// PARAM_Iam
+};
+CASSERT(DIM(s_mpParamCB) == PARAM_Max);
+
+static const bool s_mpParamFIsFloat[] =
+{
+	true,						// PARAM_Fbkc
+	true,						// PARAM_Flkc
+	true,						// PARAM_Boost
+	true,						// PARAM_Iam
+};
+CASSERT(DIM(s_mpParamFIsFloat) == PARAM_Max);
+
+
+
+// ECU Parameters to Poll
+
+static const PARAM s_aParamPoll[] =
+{
+	PARAM_Boost,
+	PARAM_Iam,
+	PARAM_Fbkc,
+	PARAM_Flkc,
+};
+static const u8 s_cParamPoll = DIM(s_aParamPoll);
+
+
+
+// Debugging support
+
+inline void Trace(const char * pChz)
+{
+#if DEBUG
+	Serial.print(pChz);
+#endif // DEBUG
+}
+
+inline void Trace(u8 b, int mode = DEC)
+{
+#if DEBUG
+	Serial.print(b, mode);
+#endif // DEBUG
+}
+
+#if DEBUG
+void Trace(char ch)
+{
+	if (isprint(ch))
+	{
+		Serial.print(ch);
+	}
+	else
+	{
+		switch (ch)
+		{
+		case '\r':
+			Serial.print("\\r");
+			break;
+
+		case '\n':
+			Serial.print("\\n");
+			break;
+
+		case '\0':
+			Serial.print("\\0");
+			break;
+
+		default:
+			Serial.print("\\x");
+			Serial.print(u8(ch), HEX);
+			break;
+		}
+	}
+}
+#else // !DEBUG
+inline void Trace(char ch)
+{
+}
+#endif // !DEBUG
+
+inline void Trace(u16 uN, int mode = DEC)
+{
+#if DEBUG
+	Serial.print(uN, mode);
+#endif // DEBUG
+}
+
+inline void Trace(s16 n, int mode = DEC)
+{
+#if DEBUG
+	Serial.print(n, mode);
+#endif // DEBUG
+}
+
+inline void Trace(u32 uN, int mode = DEC)
+{
+#if DEBUG
+	Serial.print(uN, mode);
+#endif // DEBUG
+}
+
+inline void Trace(int n, int mode = DEC)
+{
+#if DEBUG
+	Serial.print(n, mode);
+#endif // DEBUG
+}
+
+inline void Trace(float g, int cDigit = 2)
+{
+#if DEBUG
+	Serial.print(g, cDigit);
+#endif // DEBUG
+}
+
+#if DEBUG
+void TraceHex(const u8 * aB, u16 cB)
+{
+	int iB = 0;
+	for (;;)
+	{
+		u8 b = aB[iB];
+		if (b < 0x10)
+			Trace('0');
+		Trace(b, HEX);
+
+		++iB;
+		if (iB >= cB)
+			break;
+
+		Trace(' ');
+
+		if (!(iB & 0xf))
+			Trace("\n");
+		else if (!(iB & 0x3))
+			Trace("| ");
+	}
+	Trace("\n");
+}
+#else // !DEBUG
+inline void TraceHex(const u8 * aB, u16 cB)
+{
+}
+#endif // !DEBUG
+
+
+
+// BB (jasminp) Assigning __LINE__ to nAssertLine is necessary to get rid of warning about 'large integer implicitly
+//	truncated to unsigned type'.
+
+#define ASSERT(f)								\
+	do											\
+	{											\
+		if (!(f))								\
+		{										\
+			Trace("Assert failed (");			\
+			Trace(__FILE__);					\
+			Trace(":");							\
+			u32 nAssertLine = __LINE__;			\
+			Trace(nAssertLine);					\
+			Trace("): ");						\
+			Trace(#f);							\
+			Trace("\n");						\
+		}										\
+	} while(0);
+
+
 
 USBHost g_uhost;
 USBSerial g_userial(g_uhost);
@@ -83,93 +302,110 @@ struct SJ2534Ar	// tag = ar
 	u8	m_bType;				// s_mpMsgkBType[msgk]
 	u8	m_aB[0];				// Payload
 
-	const u8 CBPayload() const
-		{ return m_cBPlus1 - 1; }
+	u8			CBPayload() const
+					{ return m_cBPlus1 - 1; }
 
-	const u8 * PBPayload() const
-		{ return m_aB; }
+	const u8 *	PBPayload() const
+					{ return m_aB; }
 };
 
 
 
-// SSM protocol description: http://www.romraider.com/RomRaider/SsmProtocol
+// Subaru Select Monitor (SSM) protocol description: http://www.romraider.com/RomRaider/SsmProtocol
 // Max SSM packet size is ~250 bytes
 
 static const u8 s_cBSsmMax = 250;
 
 
 
-// Available ECU parameters
+// SSM Source/Destination IDs
 
-enum PARAM
+enum SSMID : u8
 {
-	PARAM_Fbkc,
-	PARAM_Flkc,
-	PARAM_Boost,
-	PARAM_Iam,
-
-	PARAM_Max,
-	PARAM_Min = 0,
-	PARAM_Nil
+	SSMID_Ecu	  = 0x10,
+	SSMID_TcuDccd = 0x18,
+	SSMID_Tool	  = 0xf0,
 };
 
-PARAM operator++(PARAM & param)
+
+
+// SSM Command/Response IDs
+
+enum SSMCMD : u8
 {
-	param = PARAM(param + 1);
-	return param;
+	SSMCMD_BlockReadRequest	   = 0xa0,
+	SSMCMD_AddressReadRequest  = 0xa8,
+	SSMCMD_AddressReadResponse = 0xe8,
+	SSMCMD_WriteBlockRequest   = 0xb0,
+	SSMCMD_AddressWriteRequest = 0xb8,
+	SSMCMD_EcuInitRequest	   = 0xbf,
+	SSMCMD_EcuInitResponse	   = 0xff,
+};
+
+
+
+u8 BSsmChecksum(const u8 * aB, u16 cB)
+{
+	u8 bSum = 0;
+	for (int iB = 0; iB < cB; ++iB)
+		bSum += aB[iB];
+
+	return bSum;
 }
 
-static const char * s_mpParamPChz[] =
+
+
+// SSM Packet
+
+struct SSsm	// tag = ssm
 {
-	"FBKC",						// PARAM_Fbkc
-	"FLKC",						// PARAM_Flkc
-	"Boost",					// PARAM_Boost
-	"IAM",						// PARAM_Iam
-};
-CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
+	u8		m_bHdr;				// 0x80
+	SSMID	m_bDst;				// Destination
+	SSMID	m_bSrc;				// Source
+	u8		m_cB;				// Data + checksum size
+	SSMCMD	m_bCmd;				// Command/response byte
+	u8		m_aB[0];			// Data (including checksum as last byte)
 
-static const u8 s_cBAddr = 3;
-static const u8 s_mpParamABAddr[][s_cBAddr] =
+	u8			CBData() const
+					{ return m_cB - 1; }
+
+	const u8 *	PBData() const
+					{ return m_aB; }
+
+	u8			BChecksum() const
+					{ return m_aB[CBData()]; }
+
+	bool		FVerifyChecksum() const;
+};
+
+bool SSsm::FVerifyChecksum() const
 {
-	{ 0xff, 0x81, 0xfc },				// PARAM_Fbkc
-	{ 0xff, 0x82, 0x98 },				// PARAM_Flkc
-	{ 0xff, 0x62, 0x28 },				// PARAM_Boost
-	{ 0xff, 0x32, 0x9C },				// PARAM_Iam
-};
-CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
+	const u8 * aB = (const u8 *)this;
+	int cB = m_cB + 3;
+	u8 bChecksum = BSsmChecksum(aB, cB);
+	if (bChecksum == BChecksum())
+	{
+		return true;
+	}
+	else
+	{
+		Trace("SSM checksum error\n");
+		return false;
+	}
+}
 
-static const u8 s_mpParamCB[] =
+
+
+// Bitcasting helper struct
+
+struct SIntFloat	// tag = ng
 {
-	 4,							// PARAM_Fbkc
-	 4,							// PARAM_Flkc
-	 4,							// PARAM_Boost
-	 4,							// PARAM_Iam
+	union
+	{
+		u32 m_n;
+		float m_g;
+	};
 };
-CASSERT(DIM(s_mpParamCB) == PARAM_Max);
-
-static const bool s_mpParamFIsFloat[] =
-{
-	true,						// PARAM_Fbkc
-	true,						// PARAM_Flkc
-	true,						// PARAM_Boost
-	true,						// PARAM_Iam
-};
-CASSERT(DIM(s_mpParamFIsFloat) == PARAM_Max);
-
-
-
-// ECU Parameters to Poll
-
-static const PARAM s_aParamPoll[] =
-{
-	PARAM_Boost,
-	PARAM_Iam,
-	PARAM_Fbkc,
-	PARAM_Flkc,
-};
-static const u8 s_cParamPoll = DIM(s_aParamPoll);
-
-// static u32 s_mpIParamValue[s_cParamPoll] = { 0 };
 
 
 
@@ -190,7 +426,9 @@ public:
 					  m_aBRecv(),
 					  m_cBRecv(0),
 					  m_iBRecv(0),
-					  m_iBRecvPrev(0)
+					  m_iBRecvPrev(0),
+					  m_cBParamPoll(0),
+					  m_mpParamNValue()
 						{ ; }
 
 					~CTactrix()
@@ -199,16 +437,11 @@ public:
 	bool			FTryConnect();
 	void			Disconnect();
 	bool			FTryStartPolling();
+	bool			FTryUpdatePolling();
 	TACTRIXS		Tactrixs() const
 						{ return m_tactrixs; }
 
 protected:
-	void			Trace(const char * pChz);
-	void			Trace(int n, int mode = DEC);
-	void			Trace(u8 b, int mode = DEC);
-	void			Trace(char c);
-	void			TraceHex(const u8 * aB, u16 cB);
-
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
 
@@ -230,91 +463,16 @@ protected:
 
 	void			FlushIncoming();
 
-	u8				BSsmChecksum(const u8 * aB, u16 cB);
+	void			ProcessParamValue(PARAM param, u32 nValue);
 
 	TACTRIXS		m_tactrixs;
 	u8				m_aBRecv[4096];
 	int				m_cBRecv;
 	int				m_iBRecv;
 	int				m_iBRecvPrev;
+	int				m_cBParamPoll;		// Total number of bytes (addresses) being polled
+	u32				m_mpParamNValue[s_cParamPoll];
 };
-
-void CTactrix::Trace(const char * pChz)
-{
-#if DEBUG
-	Serial.print(pChz);
-#endif // DEBUG
-}
-
-void CTactrix::Trace(int n, int mode)
-{
-#if DEBUG
-	Serial.print(n, mode);
-#endif // DEBUG
-}
-
-void CTactrix::Trace(u8 b, int mode)
-{
-#if DEBUG
-	Serial.print(b, mode);
-#endif // DEBUG
-}
-
-void CTactrix::Trace(char c)
-{
-#if DEBUG
-	if (isprint(c))
-	{
-		Serial.print(c);
-	}
-	else
-	{
-		switch (c)
-		{
-		case '\r':
-			Serial.print("\\r");
-			break;
-
-		case '\n':
-			Serial.print("\\n");
-			break;
-
-		case '\0':
-			Serial.print("\\0");
-			break;
-
-		default:
-			Serial.print("\\x");
-			Serial.print(u8(c), HEX);
-			break;
-		}
-	}
-#endif // DEBUG
-}
-
-void CTactrix::TraceHex(const u8 * aB, u16 cB)
-{
-	int iB = 0;
-	for (;;)
-	{
-		u8 b = aB[iB];
-		if (b < 0x10)
-			Trace('0');
-		Trace(b, HEX);
-
-		++iB;
-		if (iB >= cB)
-			break;
-
-		Trace(' ');
-
-		if (!(iB & 0xf))
-			Trace("\n");
-		else if (!(iB & 0x3))
-			Trace("| ");
-	}
-	Trace("\n");
-}
 
 void CTactrix::SendCommand(const u8 * aB, u16 cB)
 {
@@ -709,20 +867,22 @@ bool CTactrix::FTryStartPolling()
 			if (CBRemaining() == 0 || !FMustReceiveMessage(MSGK_Reply))
 				return false;
 
-			u8 * pBMsg = PBMessage();
+			const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
 
-			u8 cBFragment = pBMsg[3] - 1;
-			if (cBSsmInitReply + cBFragment > sizeof(aBSsmInitReply))
+			u8 cBPayload = pAr->CBPayload();
+			if (cBSsmInitReply + cBPayload > sizeof(aBSsmInitReply))
 			{
-				Trace("Overflow of SSM init reply buffer");
+				Trace("Overflow of SSM init reply buffer\n");
 				return false;
 			}
 			else
 			{
-				memcpy(&aBSsmInitReply[cBSsmInitReply], &pBMsg[5], cBFragment);
-				cBSsmInitReply += cBFragment;
+				memcpy(&aBSsmInitReply[cBSsmInitReply], pAr->PBPayload(), cBPayload);
+				cBSsmInitReply += cBPayload;
 			}
 		}
+
+		// &&& validate SSM reply?
 
 		Trace("SSM Init Reply: ");
 		TraceHex(aBSsmInitReply, cBSsmInitReply);
@@ -733,13 +893,16 @@ bool CTactrix::FTryStartPolling()
 	{
 		// Issue address read request (A8)
 
-		int cBSsmRead = 7; // header + checksum
-		for (int iParamRead = 0; iParamRead < s_cParamPoll; ++iParamRead)
-			cBSsmRead += s_cBAddr * s_mpParamCB[s_aParamPoll[iParamRead]];
+		m_cBParamPoll = 0;
+		for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
+			m_cBParamPoll += s_mpParamCB[s_aParamPoll[iParamPoll]];
+
+		int cBSsmRead = 7; // header + checksum + PP byte (single response/respond until interrupted)
+		cBSsmRead += s_cBSsmAddr * m_cBParamPoll;
 
 		if (cBSsmRead > s_cBSsmMax)
 		{
-			Trace("SSM packet overflow (trying to read too many params)");
+			Trace("SSM packet overflow (trying to read too many params)\n");
 			return false;
 		}
 
@@ -751,11 +914,11 @@ bool CTactrix::FTryStartPolling()
 								DIM(aBReadRequest),
 								"att3 %d 0 2000000 12\r\n\x80\x10\xf0%c\xa8\x01",
 								cBSsmRead,
-								2 + PARAM_Max * 3);
+								cBSsmRead - 5);
 		int iSsmStart = cBReadRequest - 6;
-		for (int iParamRead = 0; iParamRead < s_cParamPoll; ++iParamRead)
+		for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
 		{
-			PARAM param = s_aParamPoll[iParamRead];
+			PARAM param = s_aParamPoll[iParamPoll];
 			u32 nAddr =
 				s_mpParamABAddr[param][0] << 16 |
 				s_mpParamABAddr[param][1] << 8 |
@@ -766,8 +929,8 @@ bool CTactrix::FTryStartPolling()
 				aBReadRequest[cBReadRequest + 0] = (nAddr & 0xff0000) >> 16;
 				aBReadRequest[cBReadRequest + 1] = (nAddr & 0x00ff00) >> 8;
 				aBReadRequest[cBReadRequest + 2] = (nAddr & 0x0000ff);
-				CASSERT(s_cBAddr == 3);
-				cBReadRequest += s_cBAddr;
+				CASSERT(s_cBSsmAddr == 3);
+				cBReadRequest += s_cBSsmAddr;
 				nAddr += 1;
 			}
 		}
@@ -775,10 +938,7 @@ bool CTactrix::FTryStartPolling()
 		aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
 		++cBReadRequest;
 
-#if DEBUG
-		if (cBReadRequest - iSsmStart != cBSsmRead)
-			Trace("cBReadRequest - iSsmStart != cBSsmRead");
-#endif // DEBUG
+		ASSERT(cBReadRequest - iSsmStart != cBSsmRead);
 
 		SendCommand(aBReadRequest, cBReadRequest);
 
@@ -797,7 +957,7 @@ bool CTactrix::FTryStartPolling()
 			if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
 				memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
 			{
-				Trace("Loopback error");
+				Trace("Loopback error\n");
 				return false;
 			}
 
@@ -814,6 +974,119 @@ bool CTactrix::FTryStartPolling()
 	m_tactrixs = TACTRIXS_Polling;
 
 	return true;
+}
+
+bool CTactrix::FTryUpdatePolling()
+{
+	if (m_tactrixs != TACTRIXS_Polling)
+		return false;
+
+	bool fReceivedReply = false;
+	for (int i = 0; i < 10; ++i)
+	{
+		if (FTryReceiveMessage(MSGK_ReplyStart))
+		{
+			if (FMustReceiveMessage(MSGK_Reply))
+			{
+				const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
+				const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
+				if (pSsm->m_bHdr == 0x80 &&
+					pSsm->m_bDst == SSMID_Tool &&
+					pSsm->m_bSrc == SSMID_Ecu &&
+					pSsm->m_bCmd == SSMCMD_AddressReadResponse &&
+					pSsm->FVerifyChecksum())
+				{
+					fReceivedReply = true;
+					break;
+				}
+			}
+		}
+		else
+		{
+			if (m_cBRecv == 0)
+			{
+				Trace("Timed out while waiting to receive AddressReadResponse message\n");
+				return false;
+			}
+		}
+	}
+
+	if (!fReceivedReply)
+	{
+		Trace("Failed to received AddressReadResponse message after 10 tries\n");
+		return false;
+	}
+
+	const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
+	const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
+	const u8 * pBData = pSsm->PBData();
+
+	if (pSsm->CBData() != m_cBParamPoll)
+	{
+		Trace("Received incorrect number of bytes in AddressReadResponse\n");
+		return false;
+	}
+
+	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
+	{
+		PARAM param = s_aParamPoll[iParamPoll];
+
+		int nValue = 0;
+		for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
+		{
+			nValue <<= 8;
+			nValue |= *pBData;
+			++pBData;
+		}
+
+		ProcessParamValue(param, nValue);
+	}
+
+	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
+
+	return true;
+}
+
+void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
+{
+	SIntFloat ng;
+	ng.m_n = nValue;
+
+	switch (param)
+	{
+	case PARAM_Fbkc:
+		Trace("FBKC: ");
+		Trace(ng.m_g);
+		Trace("\n");
+		break;
+
+	case PARAM_Flkc:
+		Trace("FLKC: ");
+		Trace(ng.m_g);
+		Trace("\n");
+		break;
+
+	case PARAM_Boost:
+		// Convert to PSI
+
+		ng.m_g *= 0.01933677f;
+
+		Trace("Boost: ");
+		Trace(ng.m_g);
+		Trace("\n");
+		break;
+
+	case PARAM_Iam:
+		Trace("IAM: ");
+		Trace(ng.m_g);
+		Trace("\n");
+		break;
+
+	default:
+		ASSERT(false);
+	}
+
+	m_mpParamNValue[param] = ng.m_n;
 }
 
 void CTactrix::Disconnect()
@@ -840,15 +1113,6 @@ void CTactrix::Disconnect()
 	(void) FMustReceiveMessage("aro 14\r\n");
 
 	m_tactrixs = TACTRIXS_Disconnected;
-}
-
-u8 CTactrix::BSsmChecksum(const u8 * aB, u16 cB)
-{
-	u8 bSum = 0;
-	for (int iB = 0; iB < cB; ++iB)
-		bSum += aB[iB];
-
-	return bSum;
 }
 
 CTactrix g_tactrix;
@@ -908,6 +1172,15 @@ void loop()
 	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
 	{
 		if (!g_tactrix.FTryStartPolling())
+		{
+			g_tactrix.Disconnect();
+			delay(s_msTimeout);
+		}
+	}
+
+	if (g_tactrix.Tactrixs() == TACTRIXS_Polling)
+	{
+		if (!g_tactrix.FTryUpdatePolling())
 		{
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
