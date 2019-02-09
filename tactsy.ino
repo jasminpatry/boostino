@@ -847,12 +847,14 @@ bool CTactrix::FTryStartPolling()
 
 	if (!FMustReceiveMessage(MSGK_LoopbackEnd))
 		return false;
+#endif // TEST_OFFLINE
 
 	// Acknowledgement
 
 	if (!FMustReceiveMessage("aro 11\r\n"))
 		return false;
 
+#if !TEST_OFFLINE
 	// Start of normal message
 
 	if (!FMustReceiveMessage(MSGK_ReplyStart))
@@ -938,10 +940,11 @@ bool CTactrix::FTryStartPolling()
 		aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
 		++cBReadRequest;
 
-		ASSERT(cBReadRequest - iSsmStart != cBSsmRead);
+		ASSERT(cBReadRequest - iSsmStart == cBSsmRead);
 
 		SendCommand(aBReadRequest, cBReadRequest);
 
+#if !TEST_OFFLINE
 		int iBLoopback = iSsmStart;
 
 		while (iBLoopback < cBReadRequest)
@@ -966,6 +969,7 @@ bool CTactrix::FTryStartPolling()
 			if (!FMustReceiveMessage(MSGK_LoopbackEnd))
 				return false;
 		}
+#endif // !TEST_OFFLINE
 
 		if (!FMustReceiveMessage("aro 12\r\n"))
 			return false;
