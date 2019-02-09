@@ -59,6 +59,37 @@ static const char * s_mpMsgkPChz[] =
 };
 CASSERT(DIM(s_mpMsgkPChz) == MSGK_Max);
 
+static const u8 s_mpMsgkBType[] =
+{
+	0xff,				// MSGK_InfoReply (no type byte)
+	0xa0,				// MSGK_LoopbackStart
+	0x20,				// MSGK_Loopback
+	0x60,				// MSGK_LoopbackEnd
+	0x80,				// MSGK_ReplyStart
+	0x00,				// MSGK_Reply
+	0x40,				// MSGK_ReplyEnd
+};
+CASSERT(DIM(s_mpMsgkBType) == MSGK_Max);
+
+
+
+// Structure of MSGK_LoopbackStart to MSGK_ReplyEnd inclusive
+
+struct SJ2534Ar	// tag = ar
+{
+	u8	m_aBHeader[2];			// "ar"
+	u8	m_nProtocol;			// E.g. 3 for ISO9141
+	u8	m_cBPlus1;				// length including m_bType
+	u8	m_bType;				// s_mpMsgkBType[msgk]
+	u8	m_aB[0];				// Payload
+
+	const u8 CBPayload() const
+		{ return m_cBPlus1 - 1; }
+
+	const u8 * PBPayload() const
+		{ return m_aB; }
+};
+
 
 
 // SSM protocol description: http://www.romraider.com/RomRaider/SsmProtocol
@@ -426,18 +457,6 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 	int cBRem = CBRemaining();
 	u8 * pBRem = PBRemaining();
 
-	static const u8 s_mpMsgkBType[] =
-		{
-			0xff,				// MSGK_InfoReply (no type byte)
-			0xa0,				// MSGK_LoopbackStart
-			0x20,				// MSGK_Loopback
-			0x60,				// MSGK_LoopbackEnd
-			0x80,				// MSGK_ReplyStart
-			0x00,				// MSGK_Reply
-			0x40,				// MSGK_ReplyEnd
-		};
-	CASSERT(DIM(s_mpMsgkBType) == MSGK_Max);
-
 	int cBMsg = 0;
 	switch (msgk)
 	{
@@ -762,6 +781,34 @@ bool CTactrix::FTryStartPolling()
 #endif // DEBUG
 
 		SendCommand(aBReadRequest, cBReadRequest);
+
+		int iBLoopback = iSsmStart;
+
+		while (iBLoopback < cBReadRequest)
+		{
+			if (!FMustReceiveMessage(MSGK_LoopbackStart))
+				return false;
+
+			if (!FMustReceiveMessage(MSGK_Loopback))
+				return false;
+
+			const SJ2534Ar * pArLoopback = (const SJ2534Ar *)PBMessage();
+			int cBLoopbackFrag = pArLoopback->CBPayload();
+			if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
+				memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
+			{
+				Trace("Loopback error");
+				return false;
+			}
+
+			iBLoopback += cBLoopbackFrag;
+
+			if (!FMustReceiveMessage(MSGK_LoopbackEnd))
+				return false;
+		}
+
+		if (!FMustReceiveMessage("aro 12\r\n"))
+			return false;
 	}
 
 	m_tactrixs = TACTRIXS_Polling;
