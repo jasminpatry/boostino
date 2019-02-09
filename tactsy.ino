@@ -57,6 +57,60 @@ CASSERT(DIM(g_mpMsgkPChz) == MSGK_Max);
 
 
 
+enum PARAM
+{
+	PARAM_Fbkc,
+	PARAM_Flkc,
+	PARAM_Boost,
+	PARAM_Iam,
+
+	PARAM_Max,
+	PARAM_Min = 0,
+	PARAM_Nil
+};
+
+PARAM operator++(PARAM param)
+	{ return PARAM(param + 1); }
+
+static const char * g_mpParamPChz[] =
+{
+	"FBKC",						// PARAM_Fbkc
+	"FLKC",						// PARAM_Flkc
+	"Boost",					// PARAM_Boost
+	"IAM",						// PARAM_Iam
+};
+CASSERT(DIM(g_mpParamPChz) == PARAM_Max);
+
+static const u8 s_cBAddr = 3;
+static const u8 g_mpParamABAddr[][s_cBAddr] =
+{
+	{ 0xff, 0x81, 0xfc },				// PARAM_Fbkc
+	{ 0xff, 0x82, 0x98 },				// PARAM_Flkc
+	{ 0xff, 0x62, 0x28 },				// PARAM_Boost
+	{ 0xff, 0x32, 0x9C },				// PARAM_Iam
+};
+CASSERT(DIM(g_mpParamABAddr) == PARAM_Max);
+
+static const u8 g_mpParamCB[] =
+{
+	 4,							// PARAM_Fbkc
+	 4,							// PARAM_Flkc
+	 4,							// PARAM_Boost
+	 4,							// PARAM_Iam
+};
+CASSERT(DIM(g_mpParamCB) == PARAM_Max);
+
+static const bool g_mpParamFIsFloat[] =
+{
+	true,						// PARAM_Fbkc
+	true,						// PARAM_Flkc
+	true,						// PARAM_Boost
+	true,						// PARAM_Iam
+};
+CASSERT(DIM(g_mpParamFIsFloat) == PARAM_Max);
+
+
+
 enum TACTRIXS
 {
 	TACTRIXS_Disconnected,
@@ -111,6 +165,8 @@ protected:
 	bool			FMustReceiveMessage(MSGK msgk);
 
 	void			FlushIncoming();
+
+	u8				BSsmChecksum(const u8 * aB, u16 cB);
 
 	TACTRIXS		m_tactrixs;
 	u8				m_aBRecv[4096];
@@ -584,32 +640,80 @@ bool CTactrix::FTryStartPolling()
 	if (!FMustReceiveMessage(MSGK_ReplyStart))
 		return false;
 
-	u8 aBSsmInitReply[255];
-	u8 cBSsmInitReply = 0;
-
-	while (!FTryReceiveMessage(MSGK_ReplyEnd))
 	{
-		if (CBRemaining() == 0 || !FMustReceiveMessage(MSGK_Reply))
-			return false;
+		u8 aBSsmInitReply[255];
+		u8 cBSsmInitReply = 0;
 
-		u8 * pBMsg = PBMessage();
+		while (!FTryReceiveMessage(MSGK_ReplyEnd))
+		{
+			if (CBRemaining() == 0 || !FMustReceiveMessage(MSGK_Reply))
+				return false;
 
-		u8 cBFragment = pBMsg[3] - 1;
-		if (cBSsmInitReply + cBFragment > sizeof(aBSsmInitReply))
-		{
-			Trace("Overflow of SSM init reply buffer");
-			return false;
+			u8 * pBMsg = PBMessage();
+
+			u8 cBFragment = pBMsg[3] - 1;
+			if (cBSsmInitReply + cBFragment > sizeof(aBSsmInitReply))
+			{
+				Trace("Overflow of SSM init reply buffer");
+				return false;
+			}
+			else
+			{
+				memcpy(&aBSsmInitReply[cBSsmInitReply], &pBMsg[5], cBFragment);
+				cBSsmInitReply += cBFragment;
+			}
 		}
-		else
-		{
-			memcpy(&aBSsmInitReply[cBSsmInitReply], &pBMsg[5], cBFragment);
-			cBSsmInitReply += cBFragment;
-		}
+
+		Trace("SSM Init Reply: ");
+		TraceHex(aBSsmInitReply, cBSsmInitReply);
+		Trace("\n");
 	}
 
-	Trace("SSM Init Reply: ");
-	TraceHex(aBSsmInitReply, cBSsmInitReply);
-	Trace("\n");
+	{
+		// Issue address read request (A8)
+
+		int cBSsmRead = 7;
+		for (PARAM param = PARAM_Min; param < PARAM_Max; ++param)
+		{
+			cBSsmRead += s_cBAddr * g_mpParamCB[param];
+		}
+
+		u8 aBReadRequest[255];
+		int cBReadRequest = snprintf(
+								(char *)aBReadRequest,
+								DIM(aBReadRequest),
+								"att3 %d 0 2000000 12\r\n\x80\x10\xf0%c\xa8\x01",
+								cBSsmRead,
+								2 + PARAM_Max * 3);
+		int iSsmStart = cBReadRequest - 6;
+		for (PARAM param = PARAM_Min; param < PARAM_Max; ++param)
+		{
+			u32 nAddr =
+				g_mpParamABAddr[param][0] << 16 |
+				g_mpParamABAddr[param][1] << 8 |
+				g_mpParamABAddr[param][2];
+
+			for (int iB = 0; iB < g_mpParamCB[param]; ++iB)
+			{
+				aBReadRequest[cBReadRequest + 0] = (nAddr & 0xff0000) >> 16;
+				aBReadRequest[cBReadRequest + 1] = (nAddr & 0x00ff00) >> 8;
+				aBReadRequest[cBReadRequest + 2] = (nAddr & 0x0000ff);
+				CASSERT(s_cBAddr == 3);
+				cBReadRequest += s_cBAddr;
+				nAddr += 1;
+			}
+		}
+
+		aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
+		++cBReadRequest;
+
+#if DEBUG
+		if (cBReadRequest - iSsmStart != cBSsmRead)
+			Trace("cBReadRequest - iSsmStart != cBSsmRead");
+#endif // DEBUG
+
+		SendCommand(aBReadRequest, cBReadRequest);
+	}
 
 	m_tactrixs = TACTRIXS_Polling;
 
@@ -640,6 +744,15 @@ void CTactrix::Disconnect()
 	(void) FMustReceiveMessage("aro 14\r\n");
 
 	m_tactrixs = TACTRIXS_Disconnected;
+}
+
+u8 CTactrix::BSsmChecksum(const u8 * aB, u16 cB)
+{
+	u8 bSum = 0;
+	for (int iB = 0; iB < cB; ++iB)
+		bSum += aB[iB];
+
+	return bSum;
 }
 
 CTactrix g_tactrix;
