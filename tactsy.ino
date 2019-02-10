@@ -1,9 +1,8 @@
 // Tactsy -- A Simple Tactrix OP 2.0 <-> Teensy 3.6 Interface. Pronounced "taxi".
 // Copyright (c) 2019 Jasmin Patry
 
-#include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <SPI.h>
+#include <SD.h>
 #include <USBHost_t36.h>
 #include <Wire.h>
 
@@ -265,6 +264,8 @@ inline void TraceHex(const u8 * aB, u16 cB)
 
 
 
+// USB host configuration
+
 USBHost g_uhost;
 USBSerial g_userial(g_uhost);
 bool g_fUserialActive = false;
@@ -275,17 +276,21 @@ static const u32 s_msTimeout = 2000;
 
 
 
+// NOTE (jasminp) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
+//	https://github.com/NikolaKozina/j2534/blob/master/j2534.c . This fork (by one of the RomRaider devs) looks to be
+//	more up to date: https://github.com/dschultzca/j2534/blob/master/j2534.c
+
 // J2534 Message kinds
 
 enum MSGK
 {
-	MSGK_InfoReply,
-	MSGK_LoopbackStart,
-	MSGK_Loopback,
-	MSGK_LoopbackEnd,
-	MSGK_ReplyStart,
-	MSGK_Reply,
-	MSGK_ReplyEnd,
+	MSGK_InfoReply,			// "ari" reply to "ati"
+	MSGK_LoopbackStart,		// "ar" 0xa0 reply to "att"
+	MSGK_Loopback,			// "ar" 0x20 reply to "att"
+	MSGK_LoopbackEnd,		// "ar" 0x60 reply to "att"
+	MSGK_ReplyStart,		// "ar" 0x80 reply to "att"
+	MSGK_Reply,				// "ar" 0x00 reply to "att"
+	MSGK_ReplyEnd,			// "ar" 0x40 reply to "att"
 
 	MSGK_Max,
 	MSGK_Min = 0,
@@ -479,13 +484,13 @@ protected:
 
 	void			ProcessParamValue(PARAM param, u32 nValue);
 
-	TACTRIXS		m_tactrixs;
-	u8				m_aBRecv[4096];
-	int				m_cBRecv;
-	int				m_iBRecv;
-	int				m_iBRecvPrev;
-	int				m_cBParamPoll;		// Total number of bytes (addresses) being polled
-	float			m_mpParamGValue[s_cParamPoll];
+	TACTRIXS		m_tactrixs;						// Current state
+	u8				m_aBRecv[4096];					// Receive buffer
+	int				m_cBRecv;						// Total bytes in receive buffer
+	int				m_iBRecv;						// Index of remaining data in receive buffer
+	int				m_iBRecvPrev;					// Index of last message in receive buffer
+	int				m_cBParamPoll;					// Total number of bytes (addresses) being polled
+	float			m_mpParamGValue[s_cParamPoll];	// Latest values obtained from ECU
 };
 
 void CTactrix::SendCommand(const u8 * aB, u16 cB)
@@ -1163,6 +1168,7 @@ void CTactrix::Disconnect()
 CTactrix g_tactrix;
 
 
+
 // OLED Display Configuration
 // NOTE (jasminp) At text size = 1, display can fit 4 lines of 21 characters
 
@@ -1170,6 +1176,7 @@ static const int s_dXScreen = 128;
 static const int s_dYScreen = 32;
 static const int s_nPinOledReset = -1;	// share Arduino reset pin
 static const u8 s_bI2cAddrOled = 0x3c;
+static const u32 s_msDisplayWarning = 5000;	// how long to display warnings (in ms)
 
 Adafruit_SSD1306 g_oled(s_dXScreen, s_dYScreen, &Wire, s_nPinOledReset);
 
@@ -1185,6 +1192,17 @@ void DisplayStatus(const char * pChz)
 
 
 
+// SD Card Configuration
+
+static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
+static const char * s_pChzLogPrefix = "knocklog";
+static const char * s_pChzLogSuffix = ".txt";
+static const int s_cLogMax = 1000;
+static int s_nLogSuffix = -1;
+static File s_fileLog;
+
+
+
 void setup()
 {
 #if DEBUG
@@ -1192,24 +1210,55 @@ void setup()
 		(void) 0; // wait for Arduino Serial Monitor
 #endif // DEBUG
 
+	Serial.println("\n\nTactsy 0.1");
+
+	// Initialize OLED
+
 	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
 		Serial.println("SSD1306 allocation failed");
 
-	Serial.println("\n\nTactsy 0.1");
-	g_uhost.begin();
+	// Clear the screen
 
 	g_oled.clearDisplay();
 	g_oled.setTextSize(1);
 	g_oled.setTextColor(WHITE);
 	g_oled.cp437(true);
 	g_oled.display();
+
+	// Initialize SD Card
+
+	if (SD.begin(s_nPinSdChipSelect))
+	{
+		// Determine log file index
+
+		int iSuffix;
+		for (iSuffix = 0; iSuffix < s_cLogMax; ++iSuffix)
+		{
+			char aChzPath[32];
+			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
+			if (!SD.exists(aChzPath))
+			{
+				s_nLogSuffix = iSuffix;
+				Trace("Will use log file name '");
+				Trace(aChzPath);
+				Trace("'\n");
+				break;
+			}
+		}
+	}
+	else
+	{
+		Serial.println("SD card failed, or not present");
+	}
+
+	// Initialize USB host interface
+
+	g_uhost.begin();
 }
 
 void loop()
 {
 	g_uhost.Task();
-
-	// Print out information about different devices.
 
 	if (g_userial != g_fUserialActive)
 	{
@@ -1242,11 +1291,11 @@ void loop()
 		}
 	}
 
-	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
+	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected && g_fUserialActive)
 	{
 		DisplayStatus("Connecting...");
 
-		if (g_userial && !g_tactrix.FTryConnect())
+		if (!g_tactrix.FTryConnect())
 		{
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
@@ -1270,6 +1319,8 @@ void loop()
 		{
 			g_oled.clearDisplay();
 
+			// Top half always shows boost gauge
+
 			static float s_gBoostMax = -1000.0f;
 			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
@@ -1290,68 +1341,89 @@ void loop()
 			g_oled.setCursor(8, 3);
 			g_oled.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
 
-			g_oled.setCursor(8, 16);
+			// Bottom half normally shows coolant & intake temp, unless warnings need to be displayed.
+
+			static float s_gCoolantTempFMax = -100.0f;
+			float gCoolantTempF = g_tactrix.GParam(PARAM_CoolantTempF);
+			s_gCoolantTempFMax = max(gCoolantTempF, s_gCoolantTempFMax);
+
+			static float s_gIatFMax = -100.0f;
+			float gIatF = g_tactrix.GParam(PARAM_IatF);
+			s_gIatFMax = max(gIatF, s_gIatFMax);
+
+			u32 msCur = millis();
 
 			static float s_degFbkcMin = 1000.0f;
+			static u32 s_msFbkcEventLast = ~0U;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
 			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
+			if (degFbkc < 0.0f)
+				s_msFbkcEventLast = msCur;
 
 			static float s_degFlkcMin = 1000.0f;
+			static u32 s_msFlkcEventLast = ~0U;
 			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
 			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
+			if (degFlkc < 0.0f)
+				s_msFlkcEventLast = msCur;
 
 			static float s_uIamMin = 1.0f;
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
+			g_oled.setCursor(8, 16);
+			bool fWarned = false;
+
 			if (s_uIamMin < 1.0f)
 			{
-				if (uIam < 1.0f)
-					g_oled.setTextColor(BLACK, WHITE);
 				g_oled.printf(
-						"IAM:  %4.2f [%4.2f]\n",
+						"  IAM:% 5.2f [% 5.2f]\n",
 						uIam,
 						s_uIamMin);
 
-				g_oled.setTextColor(WHITE);
 				g_oled.setCursor(8, g_oled.getCursorY() + 1);
+
+				fWarned = true;
 			}
 
-			if (s_degFlkcMin < 0.0f)
+			if (msCur - s_msFbkcEventLast < s_msDisplayWarning)
 			{
-				if (degFlkc < 0.0f)
-					g_oled.setTextColor(BLACK, WHITE);
-
 				g_oled.printf(
-						"FLKC:% 5.2f [% 5.2f]\n",
-						degFlkc,
-						s_degFlkcMin);
-
-				g_oled.setTextColor(WHITE);
-				g_oled.setCursor(8, g_oled.getCursorY() + 1);
-			}
-
-			if (s_degFbkcMin < 0.0f)
-			{
-				if (degFbkc < 0.0f)
-					g_oled.setTextColor(BLACK, WHITE);
-
-				g_oled.printf(
-						"FBKC:% 5.2f [% 5.2f]\n",
+						" FBKC:% 5.2f [% 5.2f]\n",
 						degFbkc,
 						s_degFbkcMin);
 
-				g_oled.setTextColor(WHITE);
 				g_oled.setCursor(8, g_oled.getCursorY() + 1);
+
+				fWarned = true;
 			}
 
-			float gCoolantTempF = g_tactrix.GParam(PARAM_CoolantTempF);
-			if (gCoolantTempF < 150.0f)
-				g_oled.setTextColor(BLACK, WHITE);
+			if (msCur - s_msFlkcEventLast < s_msDisplayWarning)
+			{
+				g_oled.printf(
+						" FLKC:% 5.2f [% 5.2f]\n",
+						degFlkc,
+						s_degFlkcMin);
 
-			g_oled.printf("Temp: %.0f F\n", gCoolantTempF);
+				g_oled.setCursor(8, g_oled.getCursorY() + 1);
 
-			g_oled.setTextColor(WHITE);
+				fWarned = true;
+			}
+
+			if (fWarned)
+			{
+				// Draw bar in left margin to highlight
+
+				g_oled.fillRect(0, 16, 7, 16, WHITE);
+			}
+			else
+			{
+				g_oled.printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
+
+				g_oled.setCursor(8, g_oled.getCursorY() + 1);
+
+				g_oled.printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
+			}
 
 			g_oled.display();
 		}
