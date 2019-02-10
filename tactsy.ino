@@ -51,6 +51,9 @@ enum PARAM
 	PARAM_BoostPsi,
 	PARAM_Iam,
 	PARAM_CoolantTempF,
+	PARAM_LoadGPerRev,
+	PARAM_Rpm,
+	PARAM_IatF,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -68,8 +71,11 @@ static const char * s_mpParamPChz[] =
 	"FBKC (deg)",				// PARAM_FbkcDeg
 	"FLKC (deg)",				// PARAM_FlkcDeg
 	"Boost (psi)",				// PARAM_BoostPsi
-	"IAM",						// PARAM_Iam
+	"Ignition Advance Mult.",	// PARAM_Iam
 	"Coolant Temp (F)",			// PARAM_CoolantTempF
+	"Load (g/rev)",				// PARAM_LoadGPerRev
+	"RPM",						// PARAM_Rpm
+	"Intake Air Temp (F)",		// PARAM_IatF
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -79,8 +85,11 @@ static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 	{ 0xff, 0x81, 0xfc },		// PARAM_FbkcDeg
 	{ 0xff, 0x82, 0x98 },		// PARAM_FlkcDeg
 	{ 0xff, 0x62, 0x28 },		// PARAM_BoostPsi
-	{ 0xff, 0x32, 0x9C },		// PARAM_Iam
+	{ 0xff, 0x32, 0x9c },		// PARAM_Iam
 	{ 0x00, 0x00, 0x08 },		// PARAM_CoolantTempF
+	{ 0xff, 0x64, 0x10 },		// PARAM_LoadGPerRev
+	{ 0x00, 0x00, 0x0e },		// PARAM_Rpm
+	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -91,18 +100,11 @@ static const u8 s_mpParamCB[] =
 	 4,							// PARAM_BoostPsi
 	 4,							// PARAM_Iam
 	 1,							// PARAM_CoolantTempF
+	 4,							// PARAM_LoadGPerRev
+	 2,							// PARAM_Rpm
+	 1,							// PARAM_IatF
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
-
-static const bool s_mpParamFIsFloat[] =
-{
-	true,						// PARAM_FbkcDeg
-	true,						// PARAM_FlkcDeg
-	true,						// PARAM_BoostPsi
-	true,						// PARAM_Iam
-	false,						// PARAM_CoolantTempF
-};
-CASSERT(DIM(s_mpParamFIsFloat) == PARAM_Max);
 
 
 
@@ -114,7 +116,10 @@ static const PARAM s_aParamPoll[] =
 	PARAM_Iam,
 	PARAM_FbkcDeg,
 	PARAM_FlkcDeg,
+	PARAM_LoadGPerRev,
+	PARAM_Rpm,
 	PARAM_CoolantTempF,
+	PARAM_IatF,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -414,19 +419,6 @@ bool SSsm::FVerifyChecksum() const
 		return false;
 	}
 }
-
-
-
-// Bitcasting helper struct
-
-struct SIntFloat	// tag = ng
-{
-	union
-	{
-		u32 m_n;
-		float m_g;
-	};
-};
 
 
 
@@ -1100,7 +1092,11 @@ float CTactrix::GParam(PARAM param) const
 
 void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 {
-	SIntFloat ng;
+	union
+	{
+		u32		m_n;
+		float	m_g;
+	} ng;
 	ng.m_n = nValue;
 
 	switch (param)
@@ -1108,6 +1104,9 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 	case PARAM_FbkcDeg:
 	case PARAM_FlkcDeg:
 	case PARAM_Iam:
+	case PARAM_LoadGPerRev:
+		// No conversion necessary
+
 		break;
 
 	case PARAM_BoostPsi:
@@ -1117,11 +1116,16 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		break;
 
 	case PARAM_CoolantTempF:
+	case PARAM_IatF:
 		ng.m_g = 1.8f * float(nValue) - 40.0f;
 		break;
 
+	case PARAM_Rpm:
+		ng.m_g = 0.25f * float(nValue);
+		break;
+
 	default:
-		CASSERT(PARAM_CoolantTempF == PARAM_Max - 1);
+		CASSERT(PARAM_IatF == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
