@@ -402,7 +402,7 @@ struct SSsm	// tag = ssm
 bool SSsm::FVerifyChecksum() const
 {
 	const u8 * aB = (const u8 *)this;
-	int cB = m_cB + 3;
+	int cB = m_cB + 4;
 	u8 bChecksum = BSsmChecksum(aB, cB);
 	if (bChecksum == BChecksum())
 	{
@@ -608,11 +608,14 @@ bool CTactrix::FMustReceiveMessage(const char * pChz)
 		ResetReceive();
 
 #if DEBUG
-		Trace("FMustReceiveMessage got unexpected reply (expected \"");
-		int cCh = strlen(pChz);
-		for (int iCh = 0; iCh < cCh; ++iCh)
-			Trace(pChz[iCh]);
-		Trace("\")\n");
+		if (CBRemaining())
+		{
+			Trace("FMustReceiveMessage got unexpected reply (expected \"");
+			int cCh = strlen(pChz);
+			for (int iCh = 0; iCh < cCh; ++iCh)
+				Trace(pChz[iCh]);
+			Trace("\")\n");
+		}
 #endif // DEBUG
 
 		return false;
@@ -1134,9 +1137,6 @@ void CTactrix::Disconnect()
 {
 	ResetReceive();
 
-	if (m_tactrixs == TACTRIXS_Disconnected)
-		return;
-
 	if (m_tactrixs == TACTRIXS_Connected)
 	{
 		// Equivalent to J2534 PassThruStopMsgFilter
@@ -1172,11 +1172,13 @@ Adafruit_SSD1306 g_oled(s_dXScreen, s_dYScreen, &Wire, s_nPinOledReset);
 
 void setup()
 {
-	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
-		Serial.println(F("SSD1306 allocation failed"));
-
+#if DEBUG
 	while (!Serial && (millis() < 5000))
 		(void) 0; // wait for Arduino Serial Monitor
+#endif // DEBUG
+
+	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
+		Serial.println(F("SSD1306 allocation failed"));
 
 	Serial.println(F("\n\nTactsy 0.1"));
 	g_uhost.begin();
@@ -1191,7 +1193,6 @@ void setup()
 
 void loop()
 {
-	digitalWrite(13, !digitalRead(13));
 	g_uhost.Task();
 
 	// Print out information about different devices.
@@ -1239,6 +1240,7 @@ void loop()
 			g_oled.println(F("Connect Failed"));
 			g_oled.display();
 
+			g_tactrix.Disconnect();
 			delay(s_msTimeout);
 		}
 	}
@@ -1262,26 +1264,28 @@ void loop()
 		if (g_tactrix.FTryUpdatePolling())
 		{
 			g_oled.clearDisplay();
-			g_oled.setCursor(4, 4);
 
 			static float s_gBoostMax = -1000.0f;
 			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
-			g_oled.printf("%4.1f (max %4.1f)", gBoost, s_gBoostMax);
 
 			static const float s_gBoostDisplayMin = -10.0f;
 			static const float s_gBoostDisplayMax = 22.0f;
 			float uBoost = (gBoost - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
 			int dXBoost = int(s_dXScreen * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
-			static const int s_dYBoost = 15;
-			g_oled.fillRect(0, 0, dXBoost, s_dYBoost, INVERSE);
+			static const int s_dYBoost = 14;
+			g_oled.fillRect(0, 0, dXBoost, s_dYBoost, WHITE);
 
 			float uBoostMax = (s_gBoostMax - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
 			int xBoostMax = int(s_dXScreen * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
 
-			g_oled.drawFastVLine(xBoostMax, 0, s_dYBoost, INVERSE);
+			g_oled.drawFastVLine(xBoostMax, 0, s_dYBoost, WHITE);
 
-			g_oled.setCursor(0, 16);
+			g_oled.fillRect(7, 2, s_dXScreen - 18, 10, BLACK);
+			g_oled.setCursor(8, 3);
+			g_oled.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
+
+			g_oled.setCursor(8, 16);
 
 			static float s_degFbkcMin = 1000.0f;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
@@ -1300,11 +1304,12 @@ void loop()
 				if (uIam < 1.0f)
 					g_oled.setTextColor(BLACK, WHITE);
 				g_oled.printf(
-						F("IAM:%4.2f (min %4.2f)\n"),
+						F("IAM:  %4.2f [%4.2f]\n"),
 						uIam,
 						s_uIamMin);
 
 				g_oled.setTextColor(WHITE);
+				g_oled.setCursor(8, g_oled.getCursorY() + 1);
 			}
 
 			if (s_degFlkcMin < 0.0f)
@@ -1313,11 +1318,12 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FLKC:%4.2f (min %4.2f)\n"),
+						F("FLKC:% 5.2f [% 5.2f]\n"),
 						degFlkc,
 						s_degFlkcMin);
 
 				g_oled.setTextColor(WHITE);
+				g_oled.setCursor(8, g_oled.getCursorY() + 1);
 			}
 
 			if (s_degFbkcMin < 0.0f)
@@ -1326,18 +1332,19 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FBKC:%4.2f (min %4.2f)\n"),
+						F("FBKC:% 5.2f [% 5.2f]\n"),
 						degFbkc,
 						s_degFbkcMin);
 
 				g_oled.setTextColor(WHITE);
+				g_oled.setCursor(8, g_oled.getCursorY() + 1);
 			}
 
 			float gCoolantTempF = g_tactrix.GParam(PARAM_CoolantTempF);
 			if (gCoolantTempF < 150.0f)
 				g_oled.setTextColor(BLACK, WHITE);
 
-			g_oled.printf(F("Coolant Temp: %.0fF\n"), gCoolantTempF);
+			g_oled.printf(F("Temp: %.0f F\n"), gCoolantTempF);
 
 			g_oled.setTextColor(WHITE);
 
