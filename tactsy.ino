@@ -11,7 +11,7 @@
 
 // Set to 1 to enable verbose USB serial logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 // Set to 1 to test without being plugged into the vehicle
 
@@ -46,10 +46,11 @@ CASSERT(sizeof(void *) == 4);	//	...
 
 enum PARAM
 {
-	PARAM_Fbkc,
-	PARAM_Flkc,
-	PARAM_Boost,
+	PARAM_FbkcDeg,
+	PARAM_FlkcDeg,
+	PARAM_BoostPsi,
 	PARAM_Iam,
+	PARAM_CoolantTempF,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -64,38 +65,42 @@ PARAM & operator++(PARAM & param)
 
 static const char * s_mpParamPChz[] =
 {
-	"FBKC",						// PARAM_Fbkc
-	"FLKC",						// PARAM_Flkc
-	"Boost",					// PARAM_Boost
+	"FBKC (deg)",				// PARAM_FbkcDeg
+	"FLKC (deg)",				// PARAM_FlkcDeg
+	"Boost (psi)",				// PARAM_BoostPsi
 	"IAM",						// PARAM_Iam
+	"Coolant Temp (F)",			// PARAM_CoolantTempF
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
 static const u8 s_cBSsmAddr = 3;
 static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 {
-	{ 0xff, 0x81, 0xfc },		// PARAM_Fbkc
-	{ 0xff, 0x82, 0x98 },		// PARAM_Flkc
-	{ 0xff, 0x62, 0x28 },		// PARAM_Boost
+	{ 0xff, 0x81, 0xfc },		// PARAM_FbkcDeg
+	{ 0xff, 0x82, 0x98 },		// PARAM_FlkcDeg
+	{ 0xff, 0x62, 0x28 },		// PARAM_BoostPsi
 	{ 0xff, 0x32, 0x9C },		// PARAM_Iam
+	{ 0x00, 0x00, 0x08 },		// PARAM_CoolantTempF
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
 static const u8 s_mpParamCB[] =
 {
-	 4,							// PARAM_Fbkc
-	 4,							// PARAM_Flkc
-	 4,							// PARAM_Boost
+	 4,							// PARAM_FbkcDeg
+	 4,							// PARAM_FlkcDeg
+	 4,							// PARAM_BoostPsi
 	 4,							// PARAM_Iam
+	 1,							// PARAM_CoolantTempF
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
 static const bool s_mpParamFIsFloat[] =
 {
-	true,						// PARAM_Fbkc
-	true,						// PARAM_Flkc
-	true,						// PARAM_Boost
+	true,						// PARAM_FbkcDeg
+	true,						// PARAM_FlkcDeg
+	true,						// PARAM_BoostPsi
 	true,						// PARAM_Iam
+	false,						// PARAM_CoolantTempF
 };
 CASSERT(DIM(s_mpParamFIsFloat) == PARAM_Max);
 
@@ -105,10 +110,11 @@ CASSERT(DIM(s_mpParamFIsFloat) == PARAM_Max);
 
 static const PARAM s_aParamPoll[] =
 {
-	PARAM_Boost,
+	PARAM_BoostPsi,
 	PARAM_Iam,
-	PARAM_Fbkc,
-	PARAM_Flkc,
+	PARAM_FbkcDeg,
+	PARAM_FlkcDeg,
+	PARAM_CoolantTempF,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -443,7 +449,7 @@ public:
 					  m_iBRecv(0),
 					  m_iBRecvPrev(0),
 					  m_cBParamPoll(0),
-					  m_mpParamNValue()
+					  m_mpParamGValue()
 						{ ; }
 
 					~CTactrix()
@@ -487,7 +493,7 @@ protected:
 	int				m_iBRecv;
 	int				m_iBRecvPrev;
 	int				m_cBParamPoll;		// Total number of bytes (addresses) being polled
-	u32				m_mpParamNValue[s_cParamPoll];
+	float			m_mpParamGValue[s_cParamPoll];
 };
 
 void CTactrix::SendCommand(const u8 * aB, u16 cB)
@@ -1072,17 +1078,13 @@ bool CTactrix::FTryUpdatePolling()
 	// Dummy boost values to test gauge
 
 	float gBoost = -10.0f + 30.0f * (-sinf(millis() / 2000.0f) * 0.5f + 0.5f);
-	SIntFloat ng;
-	ng.m_g = gBoost;
-	m_mpParamNValue[PARAM_Boost] = ng.m_n;
+	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
 
 	float uIam = 1.0f;
-	ng.m_g = uIam;
-	m_mpParamNValue[PARAM_Iam] = ng.m_n;
+	m_mpParamGValue[PARAM_Iam] = uIam;
 
 	float degFbkc = ((millis() & 0xffc) == 0) ? -1.4f : 0.0f;
-	ng.m_g = degFbkc;
-	m_mpParamNValue[PARAM_Fbkc] = ng.m_n;
+	m_mpParamGValue[PARAM_FbkcDeg] = degFbkc;
 #endif // TEST_OFFLINE
 
 	return true;
@@ -1090,10 +1092,7 @@ bool CTactrix::FTryUpdatePolling()
 
 float CTactrix::GParam(PARAM param) const
 {
-	ASSERT(s_mpParamFIsFloat[param]);
-	SIntFloat ng;
-	ng.m_n = m_mpParamNValue[param];
-	return ng.m_g;
+	return m_mpParamGValue[param];
 }
 
 void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
@@ -1103,39 +1102,32 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 
 	switch (param)
 	{
-	case PARAM_Fbkc:
-		Trace("FBKC: ");
-		Trace(ng.m_g);
-		Trace("\n");
+	case PARAM_FbkcDeg:
+	case PARAM_FlkcDeg:
+	case PARAM_Iam:
 		break;
 
-	case PARAM_Flkc:
-		Trace("FLKC: ");
-		Trace(ng.m_g);
-		Trace("\n");
-		break;
-
-	case PARAM_Boost:
+	case PARAM_BoostPsi:
 		// Convert to PSI
 
 		ng.m_g *= 0.01933677f;
-
-		Trace("Boost: ");
-		Trace(ng.m_g);
-		Trace("\n");
 		break;
 
-	case PARAM_Iam:
-		Trace("IAM: ");
-		Trace(ng.m_g);
-		Trace("\n");
+	case PARAM_CoolantTempF:
+		ng.m_g = 1.8f * float(nValue) - 40.0f;
 		break;
 
 	default:
+		CASSERT(PARAM_CoolantTempF == PARAM_Max - 1);
 		ASSERT(false);
 	}
 
-	m_mpParamNValue[param] = ng.m_n;
+	Trace(s_mpParamPChz[param]);
+	Trace(": ");
+	Trace(ng.m_g);
+	Trace("\n");
+
+	m_mpParamGValue[param] = ng.m_g;
 }
 
 void CTactrix::Disconnect()
@@ -1273,7 +1265,7 @@ void loop()
 			g_oled.setCursor(4, 4);
 
 			static float s_gBoostMax = -1000.0f;
-			float gBoost = g_tactrix.GParam(PARAM_Boost);
+			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
 			g_oled.printf("%4.1f (max %4.1f)", gBoost, s_gBoostMax);
 
@@ -1292,11 +1284,11 @@ void loop()
 			g_oled.setCursor(0, 16);
 
 			static float s_degFbkcMin = 1000.0f;
-			float degFbkc = g_tactrix.GParam(PARAM_Fbkc);
+			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
 			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
 
 			static float s_degFlkcMin = 1000.0f;
-			float degFlkc = g_tactrix.GParam(PARAM_Flkc);
+			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
 			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
 
 			static float s_uIamMin = 1.0f;
@@ -1321,7 +1313,7 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FLKC:%4.2f (min %4.2f)"),
+						F("FLKC:%4.2f (min %4.2f)\n"),
 						degFlkc,
 						s_degFlkcMin);
 
@@ -1334,12 +1326,20 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FBKC:%4.2f (min %4.2f)"),
+						F("FBKC:%4.2f (min %4.2f)\n"),
 						degFbkc,
 						s_degFbkcMin);
 
 				g_oled.setTextColor(WHITE);
 			}
+
+			float gCoolantTempF = g_tactrix.GParam(PARAM_CoolantTempF);
+			if (gCoolantTempF < 150.0f)
+				g_oled.setTextColor(BLACK, WHITE);
+
+			g_oled.printf(F("Coolant Temp: %.0fF\n"), gCoolantTempF);
+
+			g_oled.setTextColor(WHITE);
 
 			g_oled.display();
 		}
