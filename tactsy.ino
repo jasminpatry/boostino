@@ -129,6 +129,27 @@ static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
 
 
+// ECU Parameters to Log
+
+static const PARAM s_aParamLog[] =
+{
+	PARAM_LoadGPerRev,
+	PARAM_Rpm,
+	PARAM_FbkcDeg,
+	PARAM_FlkcDeg,
+	PARAM_BoostPsi,
+	PARAM_IatF,
+	PARAM_ThrottlePct,
+	PARAM_Iam,
+};
+static const u8 s_cParamLog = DIM(s_aParamLog);
+
+// Number of entries in log history
+
+static const int s_cEntryLogHistory = 32;
+
+
+
 // Debugging support
 
 inline void Trace(const char * pChz)
@@ -432,6 +453,62 @@ bool SSsm::FVerifyChecksum() const
 
 
 
+// Log entry
+
+struct SLogEntry	// tag = logent
+{
+	u32		m_msTimestamp;
+	float	m_mpIParamLogGValue[s_cParamLog];
+};
+
+// Circular buffer of data to log, with capacity s_cEntryLogHistory
+
+class CLogHistory
+{
+public:
+	u8					CEntry() const
+							{ return m_iaGWrite - m_iaGRead; }
+	bool				FIsEmpty() const
+							{ return m_iaGRead == m_iaGRead; }
+	bool				FIsFull() const
+							{ return CEntry() == s_cEntryLogHistory; }
+	const SLogEntry &	LogentRead();
+	void				WriteLogEntry(const SLogEntry & logent);
+
+protected:
+	// Implementation based on https://www.snellman.net/blog/archive/2016-12-13-ring-buffers/
+
+	CASSERT(s_cEntryLogHistory <= u8(~0));
+	CASSERT((s_cEntryLogHistory & (s_cEntryLogHistory - 1)) == 0);
+
+	u8				IMask(u8 i)
+						{ return i & (s_cEntryLogHistory - 1); }
+
+	SLogEntry		m_aLogent[s_cEntryLogHistory];
+	u8				m_iaGRead;						// unmasked read index
+	u8				m_iaGWrite;						// unmasked write index
+};
+
+const SLogEntry & CLogHistory::LogentRead()
+{
+	ASSERT(!FIsEmpty());
+	return m_aLogent[IMask(m_iaGRead++)];
+}
+
+void CLogHistory::WriteLogEntry(const SLogEntry & logent)
+{
+	// Allow writing to full buffer by discarding oldest entry
+
+	if (FIsFull())
+		(void) LogentRead();
+
+	m_aLogent[IMask(m_iaGWrite++)] = logent;
+}
+
+CLogHistory g_loghist;
+
+
+
 // Tactrix State
 
 enum TACTRIXS
@@ -495,7 +572,7 @@ protected:
 	int				m_iBRecv;						// Index of remaining data in receive buffer
 	int				m_iBRecvPrev;					// Index of last message in receive buffer
 	int				m_cBParamPoll;					// Total number of bytes (addresses) being polled
-	float			m_mpParamGValue[s_cParamPoll];	// Latest values obtained from ECU
+	float			m_mpParamGValue[PARAM_Max];		// Latest values obtained from ECU
 };
 
 void CTactrix::SendCommand(const u8 * aB, u16 cB)
@@ -1091,6 +1168,14 @@ bool CTactrix::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_FbkcDeg] = degFbkc;
 #endif // TEST_OFFLINE
 
+	// Update log
+
+	SLogEntry logent;
+	logent.m_msTimestamp = millis();
+	for (int iParamLog = 0; iParamLog < s_cParamLog; ++iParamLog)
+		logent.m_mpIParamLogGValue[iParamLog] = GParam(s_aParamLog[iParamLog]);
+	g_loghist.WriteLogEntry(logent);
+
 	return true;
 }
 
@@ -1209,7 +1294,7 @@ void DisplayStatus(const char * pChz)
 static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
 static const char * s_pChzLogPrefix = "knocklog";
 static const char * s_pChzLogSuffix = ".txt";
-static const int s_cLogMax = 1000;
+static const int s_cLogFileMax = 1000;
 static int s_nLogSuffix = -1;
 static File s_fileLog;
 
@@ -1244,7 +1329,7 @@ void setup()
 		// Determine log file index
 
 		int iSuffix;
-		for (iSuffix = 0; iSuffix < s_cLogMax; ++iSuffix)
+		for (iSuffix = 0; iSuffix < s_cLogFileMax; ++iSuffix)
 		{
 			char aChzPath[32];
 			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
