@@ -1160,6 +1160,7 @@ CTactrix g_tactrix;
 
 
 // OLED Display Configuration
+// NOTE (jasminp) At text size = 1, display can fit 4 lines of 21 characters
 
 static const int s_dXScreen = 128;
 static const int s_dYScreen = 32;
@@ -1167,6 +1168,16 @@ static const int s_nPinOledReset = -1;	// share Arduino reset pin
 static const u8 s_bI2cAddrOled = 0x3c;
 
 Adafruit_SSD1306 g_oled(s_dXScreen, s_dYScreen, &Wire, s_nPinOledReset);
+
+
+
+void DisplayStatus(const char * pChz)
+{
+	g_oled.clearDisplay();
+	g_oled.setCursor(8, 12);
+	g_oled.println(pChz);
+	g_oled.display();
+}
 
 
 
@@ -1178,15 +1189,14 @@ void setup()
 #endif // DEBUG
 
 	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
-		Serial.println(F("SSD1306 allocation failed"));
+		Serial.println("SSD1306 allocation failed");
 
-	Serial.println(F("\n\nTactsy 0.1"));
+	Serial.println("\n\nTactsy 0.1");
 	g_uhost.begin();
 
 	g_oled.clearDisplay();
 	g_oled.setTextSize(1);
 	g_oled.setTextColor(WHITE);
-	g_oled.setCursor(0, 0);
 	g_oled.cp437(true);
 	g_oled.display();
 }
@@ -1201,13 +1211,10 @@ void loop()
 	{
 		if (g_fUserialActive)
 		{
-			Serial.print(F("*** Device - disconnected ***\n"));
+			Serial.print("*** Device - disconnected ***\n");
 			g_fUserialActive = false;
 
-			g_oled.clearDisplay();
-			g_oled.setCursor(0, 0);
-			g_oled.println(F("No Device"));
-			g_oled.display();
+			DisplayStatus("Connect to Tactrix");
 		}
 		else
 		{
@@ -1233,13 +1240,10 @@ void loop()
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
 	{
+		DisplayStatus("Connecting...");
+
 		if (g_userial && !g_tactrix.FTryConnect())
 		{
-			g_oled.clearDisplay();
-			g_oled.setCursor(0, 0);
-			g_oled.println(F("Connect Failed"));
-			g_oled.display();
-
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
 		}
@@ -1247,13 +1251,10 @@ void loop()
 
 	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
 	{
+		DisplayStatus("Polling ECU...");
+
 		if (!g_tactrix.FTryStartPolling())
 		{
-			g_oled.clearDisplay();
-			g_oled.setCursor(0, 0);
-			g_oled.println(F("StartPolling Failed"));
-			g_oled.display();
-
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
 		}
@@ -1304,7 +1305,7 @@ void loop()
 				if (uIam < 1.0f)
 					g_oled.setTextColor(BLACK, WHITE);
 				g_oled.printf(
-						F("IAM:  %4.2f [%4.2f]\n"),
+						"IAM:  %4.2f [%4.2f]\n",
 						uIam,
 						s_uIamMin);
 
@@ -1318,7 +1319,7 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FLKC:% 5.2f [% 5.2f]\n"),
+						"FLKC:% 5.2f [% 5.2f]\n",
 						degFlkc,
 						s_degFlkcMin);
 
@@ -1332,7 +1333,7 @@ void loop()
 					g_oled.setTextColor(BLACK, WHITE);
 
 				g_oled.printf(
-						F("FBKC:% 5.2f [% 5.2f]\n"),
+						"FBKC:% 5.2f [% 5.2f]\n",
 						degFbkc,
 						s_degFbkcMin);
 
@@ -1344,7 +1345,7 @@ void loop()
 			if (gCoolantTempF < 150.0f)
 				g_oled.setTextColor(BLACK, WHITE);
 
-			g_oled.printf(F("Temp: %.0f F\n"), gCoolantTempF);
+			g_oled.printf("Temp: %.0f F\n", gCoolantTempF);
 
 			g_oled.setTextColor(WHITE);
 
@@ -1352,10 +1353,7 @@ void loop()
 		}
 		else
 		{
-			g_oled.clearDisplay();
-			g_oled.setCursor(0, 0);
-			g_oled.println(F("UpdatePolling Failed"));
-			g_oled.display();
+			DisplayStatus("Polling Error");
 
 			g_tactrix.Disconnect();
 			delay(s_msTimeout);
