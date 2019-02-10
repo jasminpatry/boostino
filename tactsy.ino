@@ -53,6 +53,7 @@ enum PARAM
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
 	PARAM_IatF,
+	PARAM_ThrottlePct,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -75,6 +76,7 @@ static const char * s_mpParamPChz[] =
 	"Load (g/rev)",				// PARAM_LoadGPerRev
 	"RPM",						// PARAM_Rpm
 	"Intake Air Temp (F)",		// PARAM_IatF
+	"Throttle (%)",				// PARAM_ThrottlePct
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -82,26 +84,28 @@ static const u8 s_cBSsmAddr = 3;
 static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 {
 	{ 0xff, 0x81, 0xfc },		// PARAM_FbkcDeg
-	{ 0xff, 0x82, 0x98 },		// PARAM_FlkcDeg
-	{ 0xff, 0x62, 0x28 },		// PARAM_BoostPsi
-	{ 0xff, 0x32, 0x9c },		// PARAM_Iam
+	{ 0x00, 0x01, 0x99 },		// PARAM_FlkcDeg
+	{ 0x00, 0x00, 0x24 },		// PARAM_BoostPsi
+	{ 0x00, 0x00, 0xf9 },		// PARAM_Iam
 	{ 0x00, 0x00, 0x08 },		// PARAM_CoolantTempF
 	{ 0xff, 0x64, 0x10 },		// PARAM_LoadGPerRev
 	{ 0x00, 0x00, 0x0e },		// PARAM_Rpm
 	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
+	{ 0x00, 0x00, 0x15 },		// PARAM_ThrottlePct
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
 static const u8 s_mpParamCB[] =
 {
 	 4,							// PARAM_FbkcDeg
-	 4,							// PARAM_FlkcDeg
-	 4,							// PARAM_BoostPsi
-	 4,							// PARAM_Iam
+	 1,							// PARAM_FlkcDeg
+	 1,							// PARAM_BoostPsi
+	 1,							// PARAM_Iam
 	 1,							// PARAM_CoolantTempF
 	 4,							// PARAM_LoadGPerRev
 	 2,							// PARAM_Rpm
 	 1,							// PARAM_IatF
+	 1,							// PARAM_ThrottlePct
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -111,14 +115,15 @@ CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
 static const PARAM s_aParamPoll[] =
 {
-	PARAM_BoostPsi,
-	PARAM_Iam,
 	PARAM_FbkcDeg,
-	PARAM_FlkcDeg,
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
+	PARAM_FlkcDeg,
+	PARAM_Iam,
+	PARAM_BoostPsi,
 	PARAM_CoolantTempF,
 	PARAM_IatF,
+	PARAM_ThrottlePct,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -1074,7 +1079,6 @@ bool CTactrix::FTryUpdatePolling()
 		return false;
 
 #else // TEST_OFFLINE
-
 	// Dummy boost values to test gauge
 
 	float gBoost = -10.0f + 30.0f * (-sinf(millis() / 2000.0f) * 0.5f + 0.5f);
@@ -1107,17 +1111,21 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 	switch (param)
 	{
 	case PARAM_FbkcDeg:
-	case PARAM_FlkcDeg:
-	case PARAM_Iam:
 	case PARAM_LoadGPerRev:
 		// No conversion necessary
 
 		break;
 
-	case PARAM_BoostPsi:
-		// Convert to PSI
+	case PARAM_FlkcDeg:
+		ng.m_g = 0.25f * float(nValue) - 32.0f;
+		break;
 
-		ng.m_g *= 0.01933677f;
+	case PARAM_Iam:
+		ng.m_g = float(nValue) / 16.0f;
+		break;
+
+	case PARAM_BoostPsi:
+		ng.m_g = 0.145098039216f * float(nValue) - 18.5725490196f; // (x-128)*37/255
 		break;
 
 	case PARAM_CoolantTempF:
@@ -1129,8 +1137,12 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = 0.25f * float(nValue);
 		break;
 
+	case PARAM_ThrottlePct:
+		ng.m_g = float(nValue) * (100.0f / 255.0f);
+		break;
+
 	default:
-		CASSERT(PARAM_IatF == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_ThrottlePct == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
