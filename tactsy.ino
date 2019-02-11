@@ -10,7 +10,7 @@
 
 // Set to 1 to enable verbose USB serial logging.
 
-#define DEBUG 0
+#define DEBUG 1
 
 // Set to 1 to test without being plugged into the vehicle
 
@@ -143,10 +143,6 @@ static const PARAM s_aParamLog[] =
 	PARAM_Iam,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
-
-// Number of entries in log history
-
-static const int s_cEntryLogHistory = 32;
 
 
 
@@ -460,6 +456,10 @@ struct SLogEntry	// tag = logent
 	u32		m_msTimestamp;
 	float	m_mpIParamLogGValue[s_cParamLog];
 };
+
+// Number of entries in log history
+
+static const int s_cEntryLogHistory = 32;
 
 // Circular buffer of data to log, with capacity s_cEntryLogHistory
 
@@ -1470,6 +1470,7 @@ void loop()
 
 			g_oled.setCursor(8, 16);
 			bool fWarned = false;
+			static bool s_fWarnedLastUpdate = false;
 
 			if (s_uIamMin < 1.0f)
 			{
@@ -1523,6 +1524,80 @@ void loop()
 			}
 
 			g_oled.display();
+
+			// Log if we displayed a warning
+
+			if (fWarned)
+			{
+				if (!s_fileLog && s_nLogSuffix >= 0)
+				{
+					// Open the log file
+
+					char aChzPath[32];
+					snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, s_nLogSuffix, s_pChzLogSuffix);
+					s_fileLog = SD.open(aChzPath, FILE_WRITE);
+					if (s_fileLog)
+					{
+						// Write the header
+
+						s_fileLog.print("time,");
+						for (int iParamLog = 0;;)
+						{
+							s_fileLog.print(s_mpParamPChz[s_aParamLog[iParamLog]]);
+
+							if (++iParamLog >= s_cParamLog)
+								break;
+
+							s_fileLog.print(",");
+						}
+
+						s_fileLog.println();
+					}
+					else
+					{
+						// Don't try to open again
+
+						s_nLogSuffix = -1;
+
+						Trace("Failed to open file '");
+						Trace(aChzPath);
+						Trace("' for writing. Is SD card full?\n");
+					}
+				}
+
+				if (s_fileLog)
+				{
+					// Write the log history
+
+					while (!g_loghist.FIsEmpty())
+					{
+						const SLogEntry & logent = g_loghist.LogentRead();
+
+						s_fileLog.print(logent.m_msTimestamp / 1000.0f, 3);
+
+						for (int iParamLog = 0;;)
+						{
+							s_fileLog.print(logent.m_mpIParamLogGValue[iParamLog], 3);
+
+							if (++iParamLog >= s_cParamLog)
+								break;
+
+							s_fileLog.print(",");
+						}
+
+						s_fileLog.println();
+					}
+				}
+			}
+
+			if (!fWarned && s_fWarnedLastUpdate && s_fileLog)
+			{
+				// Flush to SD card
+
+				s_fileLog.flush();
+			}
+
+			s_fWarnedLastUpdate = fWarned;
 		}
 		else
 		{
