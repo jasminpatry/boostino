@@ -14,7 +14,7 @@
 
 // Set to 1 to test without being plugged into the vehicle
 
-#define TEST_OFFLINE 0
+#define TEST_OFFLINE 1
 
 
 
@@ -469,7 +469,7 @@ public:
 	u8					CEntry() const
 							{ return m_iaGWrite - m_iaGRead; }
 	bool				FIsEmpty() const
-							{ return m_iaGRead == m_iaGRead; }
+							{ return m_iaGRead == m_iaGWrite; }
 	bool				FIsFull() const
 							{ return CEntry() == s_cEntryLogHistory; }
 	const SLogEntry &	LogentRead();
@@ -987,7 +987,7 @@ bool CTactrix::FTryStartPolling()
 			}
 		}
 
-		// &&& validate SSM reply?
+		// BB (jasminp) Validate SSM reply?
 
 		Trace("SSM Init Reply: ");
 		TraceHex(aBSsmInitReply, cBSsmInitReply);
@@ -1011,7 +1011,7 @@ bool CTactrix::FTryStartPolling()
 			return false;
 		}
 
-		// J2534 header is at most 23 bytes
+		// J2534 header is at most 23 bytes for this request
 
 		u8 aBReadRequest[s_cBSsmMax + 23];
 		int cBReadRequest = snprintf(
@@ -1292,8 +1292,8 @@ void DisplayStatus(const char * pChz)
 // SD Card Configuration
 
 static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
-static const char * s_pChzLogPrefix = "knocklog";
-static const char * s_pChzLogSuffix = ".txt";
+static const char * s_pChzLogPrefix = "knock";
+static const char * s_pChzLogSuffix = ".log";
 static const int s_cLogFileMax = 1000;
 static int s_nLogSuffix = -1;
 static File s_fileLog;
@@ -1451,14 +1451,14 @@ void loop()
 			u32 msCur = millis();
 
 			static float s_degFbkcMin = 1000.0f;
-			static u32 s_msFbkcEventLast = ~0U;
+			static u32 s_msFbkcEventLast = 0;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
 			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
 			if (degFbkc < 0.0f)
 				s_msFbkcEventLast = msCur;
 
 			static float s_degFlkcMin = 1000.0f;
-			static u32 s_msFlkcEventLast = ~0U;
+			static u32 s_msFlkcEventLast = 0;
 			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
 			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
 			if (degFlkc < 0.0f)
@@ -1484,7 +1484,7 @@ void loop()
 				fWarned = true;
 			}
 
-			if (msCur - s_msFbkcEventLast < s_msDisplayWarning)
+			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msDisplayWarning)
 			{
 				g_oled.printf(
 						" FBKC:% 5.2f [% 5.2f]\n",
@@ -1496,7 +1496,7 @@ void loop()
 				fWarned = true;
 			}
 
-			if (msCur - s_msFlkcEventLast < s_msDisplayWarning)
+			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msDisplayWarning)
 			{
 				g_oled.printf(
 						" FLKC:% 5.2f [% 5.2f]\n",
@@ -1538,6 +1538,10 @@ void loop()
 					s_fileLog = SD.open(aChzPath, FILE_WRITE);
 					if (s_fileLog)
 					{
+						Trace("Opened file '");
+						Trace(aChzPath);
+						Trace("' for writing.\n");
+
 						// Write the header
 
 						s_fileLog.print("time,");
@@ -1559,9 +1563,9 @@ void loop()
 
 						s_nLogSuffix = -1;
 
-						Trace("Failed to open file '");
-						Trace(aChzPath);
-						Trace("' for writing. Is SD card full?\n");
+						Serial.print("Failed to open file '");
+						Serial.print(aChzPath);
+						Serial.print("' for writing. Is SD card full?\n");
 					}
 				}
 
@@ -1595,6 +1599,8 @@ void loop()
 				// Flush to SD card
 
 				s_fileLog.flush();
+
+				Trace("Flushed file.\n");
 			}
 
 			s_fWarnedLastUpdate = fWarned;
