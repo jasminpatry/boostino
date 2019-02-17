@@ -371,7 +371,7 @@ static const u8 s_cBSsmMax = 250;
 
 
 
-// SSM Source/Destination IDs
+// SSM Source/Destination IDs (ISO9141)
 
 enum SSMID : u8
 {
@@ -1651,6 +1651,9 @@ void loop()
 
 						s_fileLog.print(logent.m_msTimestamp / 1000.0f, 3);
 
+						s_fileLog.print(",");
+
+						CASSERT(s_cParamLog > 0);
 						for (int iParamLog = 0;;)
 						{
 							s_fileLog.print(logent.m_mpIParamLogGValue[iParamLog], 3);
