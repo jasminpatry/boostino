@@ -1,7 +1,8 @@
 // Tactsy -- A Simple Tactrix OP 2.0 <-> Teensy 3.6 Interface. Pronounced "taxi".
 // Copyright (c) 2019 Jasmin Patry
 
-#include <Adafruit_SSD1306.h>
+// #include <Adafruit_SSD1306.h>
+#include <ILI9341_t3.h>
 #include <SD.h>
 #include <USBHost_t36.h>
 #include <Wire.h>
@@ -14,7 +15,7 @@
 
 // Set to 1 to test without being plugged into the vehicle
 
-#define TEST_OFFLINE 0
+#define TEST_OFFLINE 1
 
 
 
@@ -1269,16 +1270,16 @@ CTactrix g_tactrix;
 
 
 
-// OLED Display Configuration
-// NOTE (jasminp) At text size = 1, display can fit 4 lines of 21 characters
+// TFT Display Configuration
+// &&& NOTE (jasminp) At text size = 1, display can fit 4 lines of 21 characters
 
-static const int s_dXScreen = 128;
-static const int s_dYScreen = 32;
-static const int s_nPinOledReset = -1;	// share Arduino reset pin
-static const u8 s_bI2cAddrOled = 0x3c;
+static const int s_dXScreen = 320;
+static const int s_dYScreen = 240;
+static const int s_nPinTftCs = 10;
+static const int s_nPinTftDc = 9;
 static const u32 s_msDisplayWarning = 5000;	// how long to display warnings (in ms)
 
-Adafruit_SSD1306 g_oled(s_dXScreen, s_dYScreen, &Wire, s_nPinOledReset);
+ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
 
 
 
@@ -1340,10 +1341,9 @@ static const u8 s_dYGfxguy = 8;
 
 void DisplayStatus(const char * pChz)
 {
-	g_oled.clearDisplay();
-	g_oled.setCursor(8, 12);
-	g_oled.println(pChz);
-	g_oled.display();
+	g_tft.fillScreen(ILI9341_BLACK);
+	g_tft.setCursor(8, 12);
+	g_tft.println(pChz);
 }
 
 
@@ -1375,18 +1375,19 @@ void setup()
 
 	// Initialize OLED
 
-	if (!g_oled.begin(SSD1306_SWITCHCAPVCC, s_bI2cAddrOled))
-		Serial.println("SSD1306 allocation failed");
+	g_tft.begin();
 
 	// Clear the screen
 
-	g_oled.clearDisplay();
-	g_oled.setTextSize(1);
-	g_oled.setTextColor(WHITE);
-	g_oled.cp437(true);
-	g_oled.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, WHITE);
-	g_oled.drawBitmap(97, 23, s_aBGfxguy, s_dXGfxguy, s_dYGfxguy, WHITE);
-	g_oled.display();
+	g_tft.fillScreen(ILI9341_BLACK);
+	g_tft.setTextSize(1);
+	g_tft.setTextColor(ILI9341_WHITE);
+	for (u32 i = 0; ; ++i)
+	{
+		g_tft.drawBitmap(13, (2 + i - 1) % 128, s_aBSti, s_dXSti, s_dYSti, ILI9341_BLACK);
+		g_tft.drawBitmap(13, (2 + i) % 128, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
+		// g_tft.drawBitmap(97, 23, s_aBGfxguy, s_dXGfxguy, s_dYGfxguy, ILI9341_WHITE);
+	}
 
 	s_msSplash = millis();
 
@@ -1485,7 +1486,8 @@ void loop()
 	{
 		if (g_tactrix.FTryUpdatePolling())
 		{
-			g_oled.clearDisplay();
+			// g_tft.fillScreen(ILI9341_BLACK);
+			g_tft.fillRect(0, 0, 128, 32, ILI9341_BLACK);
 
 			// Top half always shows boost gauge
 
@@ -1496,19 +1498,19 @@ void loop()
 			static const float s_gBoostDisplayMin = -10.0f;
 			static const float s_gBoostDisplayMax = 22.0f;
 			float uBoost = (gBoost - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
-			int dXBoost = int(s_dXScreen * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
+			int dXBoost = int(128 * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
 			static const int s_dYBoost = 13;
-			g_oled.fillRect(0, 0, dXBoost, s_dYBoost, WHITE);
+			g_tft.fillRect(0, 0, dXBoost, s_dYBoost, ILI9341_WHITE);
 
 			float uBoostMax = (s_gBoostMax - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
-			int xBoostMax = int(s_dXScreen * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
+			int xBoostMax = int(128 * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
 
-			g_oled.drawFastVLine(xBoostMax, 0, s_dYBoost, WHITE);
+			g_tft.drawFastVLine(xBoostMax, 0, s_dYBoost, ILI9341_WHITE);
 
-			g_oled.fillRect(6, 2, 115, 9, BLACK);
+			g_tft.fillRect(6, 2, 115, 9, ILI9341_BLACK);
 			static const int s_dXMargin = 7;
-			g_oled.setCursor(s_dXMargin, 3);
-			g_oled.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
+			g_tft.setCursor(s_dXMargin, 3);
+			g_tft.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
 
 			// Bottom half normally shows coolant & intake temp, unless warnings need to be displayed.
 
@@ -1540,63 +1542,63 @@ void loop()
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
-			g_oled.setCursor(s_dXMargin, 15);
+			g_tft.setCursor(s_dXMargin, 15);
 			bool fWarned = false;
-			static bool s_fWarnedLastUpdate = false;
+
+			// Invert bottom half of screen
+
+			// g_tft.fillRect(0, 14, 128, 18, ILI9341_WHITE);
+			// g_tft.setTextColor(ILI9341_BLACK);
 
 			if (s_uIamMin < 1.0f)
 			{
-				g_oled.printf(
+				g_tft.printf(
 						"  IAM:% 5.2f [% 5.2f]\n",
 						uIam,
 						s_uIamMin);
 
-				g_oled.setCursor(s_dXMargin, g_oled.getCursorY() + 1);
+				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
 			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msDisplayWarning)
 			{
-				g_oled.printf(
+				g_tft.printf(
 						" FBKC:% 5.2f [% 5.2f]\n",
 						degFbkc,
 						s_degFbkcMin);
 
-				g_oled.setCursor(s_dXMargin, g_oled.getCursorY() + 1);
+				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
 			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msDisplayWarning)
 			{
-				g_oled.printf(
+				g_tft.printf(
 						" FLKC:% 5.2f [% 5.2f]\n",
 						degFlkc,
 						s_degFlkcMin);
 
-				g_oled.setCursor(s_dXMargin, g_oled.getCursorY() + 1);
+				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
-			if (fWarned)
+			if (!fWarned)
 			{
-				// Invert bottom half of screen
+				// g_tft.fillRect(0, 14, 128, 18, ILI9341_BLACK);
+				// g_tft.setTextColor(ILI9341_WHITE);
 
-				g_oled.fillRect(0, 14, 128, 18, INVERSE);
-			}
-			else
-			{
-				g_oled.printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
+				g_tft.printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
 
-				g_oled.setCursor(s_dXMargin, g_oled.getCursorY() + 1);
+				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
 
-				g_oled.printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
+				g_tft.printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
 			}
 
-			g_oled.display();
-
+#if !TEST_OFFLINE
 			// Log if we displayed a warning
 
 			if (fWarned)
@@ -1669,6 +1671,7 @@ void loop()
 				}
 			}
 
+			static bool s_fWarnedLastUpdate = false;
 			if (!fWarned && s_fWarnedLastUpdate && s_fileLog)
 			{
 				// Flush to SD card
@@ -1679,6 +1682,7 @@ void loop()
 			}
 
 			s_fWarnedLastUpdate = fWarned;
+#endif // !TEST_OFFLINE
 		}
 		else
 		{
