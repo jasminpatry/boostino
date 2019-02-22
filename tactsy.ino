@@ -2,6 +2,8 @@
 // Copyright (c) 2019 Jasmin Patry
 
 // #include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
+#include <font_Michroma.h>
 #include <ILI9341_t3.h>
 #include <SD.h>
 #include <USBHost_t36.h>
@@ -1280,6 +1282,8 @@ static const int s_nPinTftDc = 9;
 static const u32 s_msDisplayWarning = 5000;	// how long to display warnings (in ms)
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
+GFXcanvas1 g_cnvs = GFXcanvas1(128, 32);
+// GFXcanvas16 g_cnvs = GFXcanvas16(124, 32);
 
 
 
@@ -1341,9 +1345,12 @@ static const u8 s_dYGfxguy = 8;
 
 void DisplayStatus(const char * pChz)
 {
-	g_tft.fillScreen(ILI9341_BLACK);
-	g_tft.setCursor(8, 12);
-	g_tft.println(pChz);
+	g_cnvs.fillScreen(0);
+	g_cnvs.setCursor(8, 12);
+	g_cnvs.println(pChz);
+	u16 aColor[] = { ILI9341_BLACK, ILI9341_WHITE };
+	g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
+	// g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
 }
 
 
@@ -1366,10 +1373,10 @@ static u32 s_msSplash = 0;
 
 void setup()
 {
-#if DEBUG
+// #if DEBUG
 	while (!Serial && (millis() < 5000))
 		(void) 0; // wait for Arduino Serial Monitor
-#endif // DEBUG
+// #endif // DEBUG
 
 	Serial.println("\n\nTactsy 0.1");
 
@@ -1379,15 +1386,17 @@ void setup()
 
 	// Clear the screen
 
+	g_cnvs.fillScreen(ILI9341_BLACK);
+	g_cnvs.setTextSize(1);
+	g_cnvs.setTextColor(ILI9341_WHITE);
+	g_cnvs.setT3Font(&Michroma_8);
+
 	g_tft.fillScreen(ILI9341_BLACK);
-	g_tft.setTextSize(1);
+	g_tft.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
+	g_tft.setFont(Michroma_40);
 	g_tft.setTextColor(ILI9341_WHITE);
-	for (u32 i = 0; ; ++i)
-	{
-		g_tft.drawBitmap(13, (2 + i - 1) % 128, s_aBSti, s_dXSti, s_dYSti, ILI9341_BLACK);
-		g_tft.drawBitmap(13, (2 + i) % 128, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
-		// g_tft.drawBitmap(97, 23, s_aBGfxguy, s_dXGfxguy, s_dYGfxguy, ILI9341_WHITE);
-	}
+	// g_tft.setCursor(8, 32);
+	// g_tft.print("Font test");
 
 	s_msSplash = millis();
 
@@ -1486,8 +1495,7 @@ void loop()
 	{
 		if (g_tactrix.FTryUpdatePolling())
 		{
-			// g_tft.fillScreen(ILI9341_BLACK);
-			g_tft.fillRect(0, 0, 128, 32, ILI9341_BLACK);
+			g_cnvs.fillScreen(ILI9341_BLACK);
 
 			// Top half always shows boost gauge
 
@@ -1500,17 +1508,17 @@ void loop()
 			float uBoost = (gBoost - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
 			int dXBoost = int(128 * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
 			static const int s_dYBoost = 13;
-			g_tft.fillRect(0, 0, dXBoost, s_dYBoost, ILI9341_WHITE);
+			g_cnvs.fillRect(0, 0, dXBoost, s_dYBoost, ILI9341_WHITE);
 
 			float uBoostMax = (s_gBoostMax - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
 			int xBoostMax = int(128 * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
 
-			g_tft.drawFastVLine(xBoostMax, 0, s_dYBoost, ILI9341_WHITE);
+			g_cnvs.drawFastVLine(xBoostMax, 0, s_dYBoost, ILI9341_WHITE);
 
-			g_tft.fillRect(6, 2, 115, 9, ILI9341_BLACK);
+			g_cnvs.fillRect(6, 2, 115, 9, ILI9341_BLACK);
 			static const int s_dXMargin = 7;
-			g_tft.setCursor(s_dXMargin, 3);
-			g_tft.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
+			g_cnvs.setCursor(s_dXMargin, 3);
+			g_cnvs.printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
 
 			// Bottom half normally shows coolant & intake temp, unless warnings need to be displayed.
 
@@ -1542,60 +1550,79 @@ void loop()
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
-			g_tft.setCursor(s_dXMargin, 15);
+			g_cnvs.setCursor(s_dXMargin, 15);
 			bool fWarned = false;
 
 			// Invert bottom half of screen
 
-			// g_tft.fillRect(0, 14, 128, 18, ILI9341_WHITE);
-			// g_tft.setTextColor(ILI9341_BLACK);
+			// g_cnvs.fillRect(0, 14, 128, 18, ILI9341_WHITE);
+			// g_cnvs.setTextColor(ILI9341_BLACK);
 
 			if (s_uIamMin < 1.0f)
 			{
-				g_tft.printf(
+				g_cnvs.printf(
 						"  IAM:% 5.2f [% 5.2f]\n",
 						uIam,
 						s_uIamMin);
 
-				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
+				g_cnvs.setCursor(s_dXMargin, g_cnvs.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
 			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msDisplayWarning)
 			{
-				g_tft.printf(
+				g_cnvs.printf(
 						" FBKC:% 5.2f [% 5.2f]\n",
 						degFbkc,
 						s_degFbkcMin);
 
-				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
+				g_cnvs.setCursor(s_dXMargin, g_cnvs.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
 			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msDisplayWarning)
 			{
-				g_tft.printf(
+				g_cnvs.printf(
 						" FLKC:% 5.2f [% 5.2f]\n",
 						degFlkc,
 						s_degFlkcMin);
 
-				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
+				g_cnvs.setCursor(s_dXMargin, g_cnvs.getCursorY() + 1);
 
 				fWarned = true;
 			}
 
 			if (!fWarned)
 			{
-				// g_tft.fillRect(0, 14, 128, 18, ILI9341_BLACK);
-				// g_tft.setTextColor(ILI9341_WHITE);
+				// g_cnvs.fillRect(0, 14, 128, 18, ILI9341_BLACK);
+				// g_cnvs.setTextColor(ILI9341_WHITE);
 
-				g_tft.printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
+				g_cnvs.printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
 
-				g_tft.setCursor(s_dXMargin, g_tft.getCursorY() + 1);
+				g_cnvs.setCursor(s_dXMargin, g_cnvs.getCursorY() + 1);
 
-				g_tft.printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
+				g_cnvs.printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
+			}
+
+			static u32 s_usPrev = 0;
+			u32 usStart = micros();
+
+			u16 aColor[] = { ILI9341_BLACK, ILI9341_WHITE };
+			g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
+			// g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
+			u32 usWriteRect = micros() - usStart;
+			static int s_cProfile = 20;
+			if (--s_cProfile >= 0)
+			{
+				Serial.print("writeRect: ");
+				Serial.println(usWriteRect);
+
+				u32 usLoop = usStart - s_usPrev;
+				s_usPrev = usStart;
+				Serial.print("Loop: ");
+				Serial.println(usLoop);
 			}
 
 #if !TEST_OFFLINE
