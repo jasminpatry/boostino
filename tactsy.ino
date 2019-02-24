@@ -3,11 +3,14 @@
 
 // #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
-#include <font_Michroma.h>
+#include <font_Exo-BoldItalic.h>
 #include <ILI9341_t3.h>
 #include <SD.h>
 #include <USBHost_t36.h>
 #include <Wire.h>
+
+#include "gaugeBg.h"
+#include "gaugeFg.h"
 
 
 
@@ -1282,7 +1285,7 @@ static const int s_nPinTftDc = 9;
 static const u32 s_msDisplayWarning = 5000;	// how long to display warnings (in ms)
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
-GFXcanvas1 g_cnvs = GFXcanvas1(128, 32);
+GFXcanvas16 g_cnvs = GFXcanvas16(s_dXScreen, s_dYScreen);
 // GFXcanvas16 g_cnvs = GFXcanvas16(124, 32);
 
 
@@ -1349,8 +1352,8 @@ void DisplayStatus(const char * pChz)
 	g_cnvs.setCursor(8, 12);
 	g_cnvs.println(pChz);
 	u16 aColor[] = { ILI9341_BLACK, ILI9341_WHITE };
-	g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
-	// g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
+	// g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
+	g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
 }
 
 
@@ -1389,14 +1392,60 @@ void setup()
 	g_cnvs.fillScreen(ILI9341_BLACK);
 	g_cnvs.setTextSize(1);
 	g_cnvs.setTextColor(ILI9341_WHITE);
-	g_cnvs.setT3Font(&Michroma_8);
+	// g_cnvs.setT3Font(&Exo_8_Bold_Italic);
+	g_cnvs.setRotation(0);
 
-	g_tft.fillScreen(ILI9341_BLACK);
-	g_tft.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
-	g_tft.setFont(Michroma_40);
-	g_tft.setTextColor(ILI9341_WHITE);
+	u32 usStart = micros();
+	{
+		const u8 * pB = &g_aBGaugeBg[0];
+		// int dXGaugeBg = g_aNBbGaugeBg[2] - g_aNBbGaugeBg[0];
+		for (int iY = g_aNBbGaugeBg[1]; iY < g_aNBbGaugeBg[3]; ++iY)
+		{
+			u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
+			for (int iX = g_aNBbGaugeBg[0]; iX < g_aNBbGaugeBg[2]; ++iX)
+			{
+				u8 b = *pB++;
+				b >>= 3;
+				u16 color = (b << 11) | (b << 6) | b;
+				aColorRow[iX] = color;
+			}
+		}
+	}
+
+	{
+		const u8 * pB = &g_aBGaugeFg[0];
+		// int dXGaugeFg = g_aNBbGaugeFg[2] - g_aNBbGaugeFg[0];
+		for (int iY = g_aNBbGaugeFg[1]; iY < g_aNBbGaugeFg[3]; ++iY)
+		{
+			u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
+			for (int iX = g_aNBbGaugeFg[0]; iX < g_aNBbGaugeFg[2]; ++iX)
+			{
+				u8 b = *pB++;
+				b >>= 3;
+				u16 color = (b << 11) | (b << 6) | b;
+				aColorRow[iX] = max(aColorRow[iX], color);
+			}
+		}
+	}
+
+
+	// g_cnvs.print("Font test");
+
+	g_tft.setRotation(1);
+	// g_tft.fillScreen(ILI9341_BLACK);
+	// g_tft.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
+	// g_tft.setFont(Exo_32_Bold_Italic);
+	// g_tft.setTextColor(ILI9341_WHITE);
 	// g_tft.setCursor(8, 32);
 	// g_tft.print("Font test");
+
+	g_tft.writeRect(0, 0, s_dXScreen, s_dYScreen, g_cnvs.getBuffer());
+
+	u32 usCopy = micros() - usStart;
+	Serial.print("copy: ");
+	Serial.println(usCopy);
+
+	for(;;);
 
 	s_msSplash = millis();
 
@@ -1610,8 +1659,8 @@ void loop()
 			u32 usStart = micros();
 
 			u16 aColor[] = { ILI9341_BLACK, ILI9341_WHITE };
-			g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
-			// g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
+			// g_tft.writeRect1BPP(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer(), aColor);
+			g_tft.writeRect(0, 0, g_cnvs.width(), g_cnvs.height(), g_cnvs.getBuffer());
 			u32 usWriteRect = micros() - usStart;
 			static int s_cProfile = 20;
 			if (--s_cProfile >= 0)
