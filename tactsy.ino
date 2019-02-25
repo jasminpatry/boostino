@@ -45,6 +45,8 @@ typedef int8_t		s8;
 CASSERT(sizeof(int) == 4);		// Teensy 3.6 is 32-bit
 CASSERT(sizeof(void *) == 4);	//	...
 
+static const float s_gPi = 3.14159265f;
+
 
 
 // Available ECU parameters
@@ -1386,52 +1388,142 @@ void setup()
 	// Initialize OLED
 
 	g_tft.begin();
+	g_tft.setRotation(1);
+	g_tft.setFont(Exo_28_Bold_Italic);
 
 	// Clear the screen
 
-	g_cnvs.fillScreen(ILI9341_BLACK);
-	g_cnvs.setTextSize(1);
 	g_cnvs.setTextColor(ILI9341_WHITE);
-	// g_cnvs.setT3Font(&Exo_8_Bold_Italic);
+	g_cnvs.setT3Font(&Exo_28_Bold_Italic);
 	g_cnvs.setRotation(0);
 
-	u32 usStart = micros();
-	{
-		const u8 * pB = &g_aBGaugeBg[0];
-		// int dXGaugeBg = g_aNBbGaugeBg[2] - g_aNBbGaugeBg[0];
-		for (int iY = g_aNBbGaugeBg[1]; iY < g_aNBbGaugeBg[3]; ++iY)
-		{
-			u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
-			for (int iX = g_aNBbGaugeBg[0]; iX < g_aNBbGaugeBg[2]; ++iX)
-			{
-				u8 b = *pB++;
-				b >>= 3;
-				u16 color = (b << 11) | (b << 6) | b;
-				aColorRow[iX] = color;
-			}
-		}
-	}
+	// @@@ animation test
 
+	for(;;)
 	{
-		const u8 * pB = &g_aBGaugeFg[0];
-		// int dXGaugeFg = g_aNBbGaugeFg[2] - g_aNBbGaugeFg[0];
-		for (int iY = g_aNBbGaugeFg[1]; iY < g_aNBbGaugeFg[3]; ++iY)
+		for (float gBoost = -15; gBoost < 25.0f; gBoost += 0.5f)
 		{
-			u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
-			for (int iX = g_aNBbGaugeFg[0]; iX < g_aNBbGaugeFg[2]; ++iX)
+			g_cnvs.fillScreen(ILI9341_BLACK);
+
+			float radBoost = (6.0f * gBoost + 90.0f) * s_gPi / 180.0f;
+			float gSinBoost = sinf(radBoost);
+			float gCosBoost = cosf(radBoost);
+			float gCotanBoost = gCosBoost / gSinBoost;
+			static const int s_xBoostCenter = 160;
+			static const int s_yBoostCenter = 131;
+			static const int s_sNeedle = 113;
+
 			{
-				u8 b = *pB++;
-				b >>= 3;
-				u16 color = (b << 11) | (b << 6) | b;
-				aColorRow[iX] = max(aColorRow[iX], color);
+				const u8 * pB = &g_aBGaugeBg[0];
+				if (radBoost < s_gPi)
+				{
+					for (int iY = g_aNBbGaugeBg[1]; iY < g_aNBbGaugeBg[3]; ++iY)
+					{
+						int diY = iY - s_yBoostCenter;
+						int iXRedMac;
+						if (diY >= 0)
+							iXRedMac = -1;
+						else
+							iXRedMac = min(g_aNBbGaugeBg[2], roundf(float(diY) * gCotanBoost + s_xBoostCenter));
+
+						u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
+						int iX;
+						for (iX = g_aNBbGaugeBg[0]; iX < iXRedMac; ++iX)
+						{
+							u8 b = *pB++;
+							b *= 2;
+							b >>= 3;
+							u16 color = (b << 11);
+							aColorRow[iX] = color;
+						}
+						for (; iX < g_aNBbGaugeBg[2]; ++iX)
+						{
+							u8 b = *pB++;
+							b >>= 3;
+							u16 color = (b << 11) | (b << 6) | b;
+							aColorRow[iX] = color;
+						}
+					}
+				}
+				else
+				{
+					for (int iY = g_aNBbGaugeBg[1]; iY < g_aNBbGaugeBg[3]; ++iY)
+					{
+						int diY = iY - s_yBoostCenter;
+						int iXRedMic;
+						if (diY <= 0)
+							iXRedMic = g_aNBbGaugeBg[0];
+						else
+							iXRedMic = min(g_aNBbGaugeBg[2], roundf(float(diY) * gCotanBoost + s_xBoostCenter));
+
+						u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
+						int iX;
+						for (iX = g_aNBbGaugeBg[0]; iX < iXRedMic; ++iX)
+						{
+							u8 b = *pB++;
+							b >>= 3;
+							u16 color = (b << 11) | (b << 6) | b;
+							aColorRow[iX] = color;
+						}
+						for (; iX < g_aNBbGaugeBg[2]; ++iX)
+						{
+							u8 b = *pB++;
+							b *= 2;
+							b >>= 3;
+							u16 color = (b << 11);
+							aColorRow[iX] = color;
+						}
+					}
+				}
 			}
+
+			{
+				const u8 * pB = &g_aBGaugeFg[0];
+				// int dXGaugeFg = g_aNBbGaugeFg[2] - g_aNBbGaugeFg[0];
+				for (int iY = g_aNBbGaugeFg[1]; iY < g_aNBbGaugeFg[3]; ++iY)
+				{
+					u16 * aColorRow = g_cnvs.getBuffer() + iY * s_dXScreen;
+					for (int iX = g_aNBbGaugeFg[0]; iX < g_aNBbGaugeFg[2]; ++iX)
+					{
+						u8 b = *pB++;
+						b >>= 3;
+						u16 color = (b << 11) | (b << 6) | b;
+						aColorRow[iX] = max(aColorRow[iX], color);
+					}
+				}
+			}
+
+			// @@@ add function for alignment at decimal
+			char aChzBoost[16];
+			int cCh = snprintf(aChzBoost, DIM(aChzBoost), "%.1f", fabsf(gBoost));
+			char chDec = aChzBoost[cCh - 1];
+			aChzBoost[cCh - 1] = '\0';
+
+			// @@@ copy strPixelLen to adafruit_gfx
+			g_cnvs.setCursor(138 - g_tft.strPixelLen(aChzBoost), 175);
+			aChzBoost[cCh - 1] = chDec;
+			g_cnvs.print(aChzBoost);
+
+			if (gBoost < 0.0f)
+			{
+				g_cnvs.setCursor(77, 175);
+				g_cnvs.write('-');
+			}
+
+			g_cnvs.drawLine(
+					s_xBoostCenter,
+					s_yBoostCenter,
+					s_xBoostCenter - s_sNeedle * gCosBoost,
+					s_yBoostCenter - s_sNeedle * gSinBoost,
+					ILI9341_WHITE);
+
+			g_tft.writeRect(0, 0, s_dXScreen, s_dYScreen, g_cnvs.getBuffer());
 		}
 	}
 
 
 	// g_cnvs.print("Font test");
 
-	g_tft.setRotation(1);
 	// g_tft.fillScreen(ILI9341_BLACK);
 	// g_tft.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
 	// g_tft.setFont(Exo_32_Bold_Italic);
@@ -1439,11 +1531,9 @@ void setup()
 	// g_tft.setCursor(8, 32);
 	// g_tft.print("Font test");
 
-	g_tft.writeRect(0, 0, s_dXScreen, s_dYScreen, g_cnvs.getBuffer());
-
-	u32 usCopy = micros() - usStart;
-	Serial.print("copy: ");
-	Serial.println(usCopy);
+	// u32 usCopy = micros() - usStart;
+	// Serial.print("copy: ");
+	// Serial.println(usCopy);
 
 	for(;;);
 
