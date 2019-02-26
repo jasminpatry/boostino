@@ -1,7 +1,6 @@
 // Tactsy -- A Simple Tactrix OP 2.0 <-> Teensy 3.6 Interface. Pronounced "taxi".
 // Copyright (c) 2019 Jasmin Patry
 
-// #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
 #include <font_Exo-BoldItalic.h>
 #include <ILI9341_t3.h>
@@ -57,11 +56,12 @@ enum PARAM
 	PARAM_FlkcDeg,
 	PARAM_BoostPsi,
 	PARAM_Iam,
-	PARAM_CoolantTempF,
+	PARAM_CoolantTempF,	// BB (jasminp) Currently unused
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
 	PARAM_IatF,
 	PARAM_ThrottlePct,
+	PARAM_SpeedMph,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -85,6 +85,7 @@ static const char * s_mpParamPChz[] =
 	"RPM",						// PARAM_Rpm
 	"Intake Air Temp (F)",		// PARAM_IatF
 	"Throttle (%)",				// PARAM_ThrottlePct
+	"Speed (MPH)",				// PARAM_SpeedMph
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -100,6 +101,7 @@ static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 	{ 0x00, 0x00, 0x0e },		// PARAM_Rpm
 	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
 	{ 0x00, 0x00, 0x15 },		// PARAM_ThrottlePct
+	{ 0x00, 0x00, 0x10 },		// PARAM_SpeedMph
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -114,6 +116,7 @@ static const u8 s_mpParamCB[] =
 	 2,							// PARAM_Rpm
 	 1,							// PARAM_IatF
 	 1,							// PARAM_ThrottlePct
+	 1,							// PARAM_SpeedMph
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -129,9 +132,9 @@ static const PARAM s_aParamPoll[] =
 	PARAM_FlkcDeg,
 	PARAM_Iam,
 	PARAM_BoostPsi,
-	PARAM_CoolantTempF,
 	PARAM_IatF,
 	PARAM_ThrottlePct,
+	PARAM_SpeedMph,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -1093,7 +1096,7 @@ bool CTactrix::FTryStartPolling()
 
 bool CTactrix::FTryUpdatePolling()
 {
-	if (m_tactrixs != TACTRIXS_Polling)
+	if (m_tactrixs != TACTRIXS_Polling || !g_userial)
 		return false;
 
 #if !TEST_OFFLINE
@@ -1166,7 +1169,7 @@ bool CTactrix::FTryUpdatePolling()
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
 
-	float gBoost = -10.0f + 35.0f * (-sinf(millis() / 1000.0f) * 0.5f + 0.5f);
+	float gBoost = -10.0f + 30.0f * (-sinf(millis() / 1000.0f) * 0.5f + 0.5f);
 	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
 
 	float uIam = 1.0f;
@@ -1177,6 +1180,10 @@ bool CTactrix::FTryUpdatePolling()
 
 	float degFlkc = ((millis() & 0x1fff) - 0xf0 < 0x100) ? -1.4f : 0.0f;
 	m_mpParamGValue[PARAM_FlkcDeg] = degFlkc;
+
+	m_mpParamGValue[PARAM_SpeedMph] = 113.0f;
+
+	m_mpParamGValue[PARAM_IatF] = 109.0f;
 #endif // TEST_OFFLINE
 
 	// Update log
@@ -1237,8 +1244,12 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * (100.0f / 255.0f);
 		break;
 
+	case PARAM_SpeedMph:
+		ng.m_g = float(nValue) * 0.621371192f;
+		break;
+
 	default:
-		CASSERT(PARAM_ThrottlePct == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_SpeedMph == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
@@ -1278,20 +1289,33 @@ CTactrix g_tactrix;
 
 
 // TFT Display Configuration
-// &&& NOTE (jasminp) At text size = 1, display can fit 4 lines of 21 characters
 
 static const int s_dXScreen = 320;
 static const int s_dYScreen = 240;
 static const int s_nPinTftCs = 10;
 static const int s_nPinTftDc = 9;
-static const u32 s_msDisplayWarning = 5000;	// how long to display warnings (in ms)
+static const u32 s_msLogAfterEvent = 5000;	// how long to log after an event
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
 GFXcanvas8 g_aCnvs[2] = { GFXcanvas8(s_dXScreen, s_dYScreen), GFXcanvas8(s_dXScreen, s_dYScreen) };
-int g_iFrame = 0;
-GFXcanvas8 * g_pCnvs = nullptr;
-GFXcanvas8 * g_pCnvsPrev = nullptr;
+GFXcanvas8 * g_pCnvs = &g_aCnvs[0];
+GFXcanvas8 * g_pCnvsPrev = &g_aCnvs[1];
 uint16_t g_aColorPalette[64];
+
+static const uint8_t s_iColorWhite = 0x1F;
+CASSERT(s_iColorWhite == DIM(g_aColorPalette) / 2 - 1);
+
+static const uint8_t s_iColorGrey = 0x10;
+
+static const uint8_t s_iColorRed = 0x3F;
+CASSERT(s_iColorRed == DIM(g_aColorPalette) - 1);
+
+
+
+void UpdateTft()
+{
+	g_tft.updateRect8BPP(0, 0, s_dXScreen, s_dYScreen, g_pCnvs->getBuffer(), g_pCnvsPrev->getBuffer(), g_aColorPalette);
+}
 
 
 
@@ -1351,14 +1375,26 @@ static const u8 s_dYGfxguy = 8;
 
 
 
+void DrawSplashScreen()
+{
+	static const int s_xSti = 198;
+	static const int s_ySti = 201;
+	static const int s_xGfxguy = 282;
+	static const int s_yGfxguy = 222;
+
+	g_pCnvs->drawBitmap(s_xSti, s_ySti, s_aBSti, s_dXSti, s_dYSti, s_iColorWhite);
+	g_pCnvs->drawBitmap(s_xGfxguy, s_yGfxguy, s_aBGfxguy, s_dXGfxguy, s_dYGfxguy, s_iColorGrey);
+}
+
+
+
 void DisplayStatus(const char * pChz)
 {
-	// @@@ update this
-
 	g_pCnvs->fillScreen(0);
-	g_pCnvs->setCursor(8, 12);
+	g_pCnvs->setCursor(10, 50);
+	g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
+	g_pCnvs->setTextColor(s_iColorWhite);
 	g_pCnvs->println(pChz);
-	g_tft.writeRect8BPP(0, 0, s_dXScreen, s_dYScreen, g_pCnvs->getBuffer(), g_aColorPalette);
 }
 
 
@@ -1371,11 +1407,6 @@ static const char * s_pChzLogSuffix = ".log";
 static const int s_cLogFileMax = 1000;
 static int s_nLogSuffix = -1;
 static File s_fileLog;
-
-
-
-static const u32 s_msSplashMax = 5000;
-static u32 s_msSplash = 0;
 
 
 
@@ -1398,7 +1429,7 @@ void setup()
 
 	for (int iColor = 0; iColor < DIM(g_aColorPalette); ++iColor)
 	{
-		uint8_t b = iColor & 0x1f;
+		uint8_t b = iColor & s_iColorWhite;
 		uint16_t color = (b << 11) | (b << 6) | b;
 
 		// Entries 32-63 are red
@@ -1409,30 +1440,183 @@ void setup()
 		g_aColorPalette[iColor] = color;
 	}
 
+	// Setup canvases
+
 	for (int iCnvs = 0; iCnvs < DIM(g_aCnvs); ++iCnvs)
 	{
-		g_aCnvs[iCnvs].setTextColor(0x1F);
+		g_aCnvs[iCnvs].setTextColor(s_iColorWhite);
 		g_aCnvs[iCnvs].setRotation(0);
 		g_aCnvs[iCnvs].fillScreen(0x0);
 	}
 
-	// &&& animation test
+	DrawSplashScreen();
+	UpdateTft();
 
-	for(;;)
+	// Initialize SD Card
+
+	if (SD.begin(s_nPinSdChipSelect))
 	{
-		for (float gBoost = -15; gBoost < 25.0f; gBoost += 0.1f)
+		// Determine log file index
+
+		int iSuffix;
+		for (iSuffix = 0; iSuffix < s_cLogFileMax; ++iSuffix)
 		{
-			u32 usStart = micros();
+			char aChzPath[32];
+			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
+			if (!SD.exists(aChzPath))
+			{
+				s_nLogSuffix = iSuffix;
+				Trace("Will use log file name '");
+				Trace(aChzPath);
+				Trace("'\n");
+				break;
+			}
+		}
+	}
+	else
+	{
+		Serial.println("SD card failed, or not present");
+	}
 
-			g_iFrame = 1 - g_iFrame;
-			g_pCnvsPrev = &g_aCnvs[1 - g_iFrame];
-			g_pCnvs = &g_aCnvs[g_iFrame];
+	// Initialize USB host interface
 
+	g_uhost.begin();
+}
+
+void loop()
+{
+	g_uhost.Task();
+
+	// Flip buffers
+
+	swap(g_pCnvs, g_pCnvsPrev);
+
+	static const u32 s_msSplashMax = 5000;
+
+	u32 msCur = millis();
+
+	if (msCur <= s_msSplashMax)
+		DrawSplashScreen();
+
+	if (g_userial != g_fUserialActive)
+	{
+		if (g_fUserialActive)
+		{
+			Serial.print("*** Device - disconnected ***\n");
+			g_fUserialActive = false;
+		}
+		else
+		{
+			Serial.printf("*** Device %x:%x - connected ***\n", g_userial.idVendor(), g_userial.idProduct());
+			g_fUserialActive = true;
+
+			const u8 * pChz = g_userial.manufacturer();
+			if (pChz && *pChz)
+				Serial.printf("  manufacturer: %s\n", pChz);
+
+			pChz = g_userial.product();
+			if (pChz && *pChz)
+				Serial.printf("  product: %s\n", pChz);
+
+			pChz = g_userial.serialNumber();
+			if (pChz && *pChz)
+				Serial.printf("  Serial: %s\n", pChz);
+
+			static const int s_nUsbBaud = 115200;
+			g_userial.begin(s_nUsbBaud);
+		}
+	}
+
+	if (!g_fUserialActive)
+	{
+		if (msCur > s_msSplashMax)
+			DisplayStatus("Connect to Tactrix");
+	}
+	else if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
+	{
+		if (msCur > s_msSplashMax)
+			DisplayStatus("Connecting...");
+
+		if (!g_tactrix.FTryConnect())
+		{
+			g_tactrix.Disconnect();
+			delay(s_msTimeout);
+		}
+	}
+
+	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
+	{
+		if (msCur > s_msSplashMax)
+			DisplayStatus("Polling ECU...");
+
+		if (!g_tactrix.FTryStartPolling())
+		{
+			g_tactrix.Disconnect();
+			delay(s_msTimeout);
+		}
+	}
+
+	if (g_tactrix.Tactrixs() == TACTRIXS_Polling)
+	{
+		if (g_tactrix.FTryUpdatePolling())
+		{
 			g_pCnvs->fillScreen(0x0);
+
+			// &&& clean this up
+
+			static float s_gBoostMax = -1000.0f;
+			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
+			s_gBoostMax = max(gBoost, s_gBoostMax);
+
+			static float s_degFbkcMin = 1000.0f;
+			static float s_degFbkcPrev = 0.0f;
+			static u32 s_msFbkcEventLast = 0;
+			static int s_cFbkcEvent = 0;
+			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
+
+			// Check if we have a new FBKC event
+
+			if (degFbkc < s_degFbkcPrev)
+				++s_cFbkcEvent;
+			s_degFbkcPrev = degFbkc;
+
+			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
+			if (degFbkc < 0.0f)
+				s_msFbkcEventLast = msCur;
+
+			static float s_degFlkcMin = 1000.0f;
+			static u32 s_msFlkcEventLast = 0;
+			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
+			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
+			if (degFlkc < 0.0f)
+				s_msFlkcEventLast = msCur;
+
+			// &&& Do something for IAM
+			static float s_uIamMin = 1.0f;
+			float uIam = g_tactrix.GParam(PARAM_Iam);
+			s_uIamMin = min(uIam, s_uIamMin);
+
+			bool fWriteToLog = false;
+			if (s_uIamMin < 1.0f)
+			{
+				fWriteToLog = true;
+			}
+
+			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent)
+			{
+				fWriteToLog = true;
+			}
+
+			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)
+			{
+				fWriteToLog = true;
+			}
+
 			g_pCnvs->setT3Font(&Exo_28_Bold_Italic);
 			g_tft.setFont(Exo_28_Bold_Italic); // &&&
 
 			float radBoost = (6.0f * gBoost + 90.0f) * s_gPi / 180.0f;
+			float radBoostMax = (6.0f * s_gBoostMax + 90.0f) * s_gPi / 180.0f;
 			float gSinBoost = sinf(radBoost);
 			float gCosBoost = cosf(radBoost);
 			float gCotanBoost = gCosBoost / gSinBoost;
@@ -1441,6 +1625,8 @@ void setup()
 			static const int s_sNeedle = 113;
 
 			{
+				// Draw boost gauge background, with portion behind needle in red
+
 				const u8 * pB = &g_aBGaugeBg[0];
 				if (radBoost < s_gPi)
 				{
@@ -1495,6 +1681,8 @@ void setup()
 			}
 
 			{
+				// Draw boost gauge foreground
+
 				const u8 * pB = &g_aBGaugeFg[0];
 				for (int iY = g_aNBbGaugeFg[1]; iY < g_aNBbGaugeFg[3]; ++iY)
 				{
@@ -1508,321 +1696,93 @@ void setup()
 				}
 			}
 
-			// &&& add function for alignment at decimal
 			char aChz[16];
-			int cCh = snprintf(aChz, DIM(aChz), "%.1f", fabsf(gBoost));
-			char chDec = aChz[cCh - 1];
-			aChz[cCh - 1] = '\0';
 
-			// &&& copy strPixelLen to adafruit_gfx
-			g_pCnvs->setCursor(138 - g_tft.strPixelLen(aChz), 175);
-			aChz[cCh - 1] = chDec;
-			g_pCnvs->print(aChz);
-
-			if (gBoost < 0.0f)
 			{
-				g_pCnvs->setCursor(77, 175);
-				g_pCnvs->write('-');
+				// Draw boost value, aligning at decimal point
+
+				int cCh = snprintf(aChz, DIM(aChz), "%.1f", fabsf(gBoost));
+				char chDec = aChz[cCh - 1];
+				aChz[cCh - 1] = '\0';
+
+				// &&& copy strPixelLen to adafruit_gfx
+				g_pCnvs->setCursor(138 - g_tft.strPixelLen(aChz), 175);
+				aChz[cCh - 1] = chDec;
+				g_pCnvs->print(aChz);
+
+				if (gBoost < 0.0f)
+				{
+					g_pCnvs->setCursor(77, 175);
+					g_pCnvs->write('-');
+				}
 			}
 
-			float gSpeedMph = 102.0f;
-			snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
-			g_pCnvs->setCursor(65 - g_tft.strPixelLen(aChz), 10);
-			g_pCnvs->print(aChz);
+			{
+				// Draw speed
+
+				float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
+				snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
+				g_pCnvs->setCursor(65 - g_tft.strPixelLen(aChz), 10);
+				g_pCnvs->print(aChz);
+			}
 
 			g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
 			g_tft.setFont(Exo_16_Bold_Italic); // &&&
 
-			float gIatF = 106.0f;
-			snprintf(aChz, DIM(aChz), "%d", int(roundf(gIatF)));
-			g_pCnvs->setCursor(51 - g_tft.strPixelLen(aChz), 214);
-			g_pCnvs->print(aChz);
+			{
+				// Draw IAT
 
-			float gFbkc = -1.40f;
-			snprintf(aChz, DIM(aChz), "%.2f", gFbkc);
+				float gIatF = g_tactrix.GParam(PARAM_IatF);
+				snprintf(aChz, DIM(aChz), "%d", int(roundf(gIatF)));
+				g_pCnvs->setCursor(51 - g_tft.strPixelLen(aChz), 214);
+				g_pCnvs->print(aChz);
+			}
+
+			// Draw FBKC
+
+			if (degFbkc < 0.0f)
+			{
+				g_pCnvs->setTextColor(s_iColorRed);
+				snprintf(aChz, DIM(aChz), "%.2f", degFbkc);
+			}
+			else
+			{
+				snprintf(aChz, DIM(aChz), "%.2f", s_degFbkcMin);
+			}
 			g_pCnvs->setCursor(301 - g_tft.strPixelLen(aChz), 26);
 			g_pCnvs->print(aChz);
 
-			int cFbkc = 3;
-			snprintf(aChz, DIM(aChz), "%d", cFbkc);
+			// Draw FBKC count
+
+			snprintf(aChz, DIM(aChz), "%d", s_cFbkcEvent);
 			g_pCnvs->setCursor(297 - g_tft.strPixelLen(aChz), 48);
 			g_pCnvs->print(aChz);
+			g_pCnvs->setTextColor(s_iColorWhite);
 
-			float gBoostMax = 17.5f;
-			snprintf(aChz, DIM(aChz), "%.1f", gBoostMax);
+			// Draw max boost
+
+			snprintf(aChz, DIM(aChz), "%.1f", s_gBoostMax);
 			g_pCnvs->setCursor(284 - g_tft.strPixelLen(aChz), 214);
 			g_pCnvs->print(aChz);
 
 			g_pCnvs->drawLine(
-					s_xBoostCenter,
-					s_yBoostCenter,
-					s_xBoostCenter - s_sNeedle * gCosBoost,
-					s_yBoostCenter - s_sNeedle * gSinBoost,
-					0x1F);
+						s_xBoostCenter,
+						s_yBoostCenter,
+						s_xBoostCenter - s_sNeedle * cos(radBoostMax),
+						s_yBoostCenter - s_sNeedle * sin(radBoostMax),
+						s_iColorRed);
 
-			g_tft.updateRect8BPP(0, 0, s_dXScreen, s_dYScreen, g_pCnvs->getBuffer(), g_pCnvsPrev->getBuffer(), g_aColorPalette);
-
-			u32 usUpdateRect = micros() - usStart;
-			static int s_cProfile = 100;
-			static int s_usTotal = 0;
-			if (--s_cProfile >= 0)
-			{
-				Serial.print("updateRect: ");
-				Serial.println(usUpdateRect);
-				s_usTotal += usUpdateRect;
-			}
-			else if (s_cProfile == -1)
-			{
-				Serial.printf("average: %f\n", float(s_usTotal) / 100.0f);
-			}
-		}
-	}
-
-
-	// g_pCnvs->print("Font test");
-
-	// g_tft.fillScreen(ILI9341_BLACK);
-	// g_tft.drawBitmap(13, 2, s_aBSti, s_dXSti, s_dYSti, ILI9341_WHITE);
-	// g_tft.setFont(Exo_32_Bold_Italic);
-	// g_tft.setTextColor(ILI9341_WHITE);
-	// g_tft.setCursor(8, 32);
-	// g_tft.print("Font test");
-
-	// u32 usCopy = micros() - usStart;
-	// Serial.print("copy: ");
-	// Serial.println(usCopy);
-
-	for(;;);
-
-	s_msSplash = millis();
-
-	// Initialize SD Card
-
-	if (SD.begin(s_nPinSdChipSelect))
-	{
-		// Determine log file index
-
-		int iSuffix;
-		for (iSuffix = 0; iSuffix < s_cLogFileMax; ++iSuffix)
-		{
-			char aChzPath[32];
-			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
-			if (!SD.exists(aChzPath))
-			{
-				s_nLogSuffix = iSuffix;
-				Trace("Will use log file name '");
-				Trace(aChzPath);
-				Trace("'\n");
-				break;
-			}
-		}
-	}
-	else
-	{
-		Serial.println("SD card failed, or not present");
-	}
-
-	// Initialize USB host interface
-
-	g_uhost.begin();
-}
-
-void loop()
-{
-	g_uhost.Task();
-
-	if (g_userial != g_fUserialActive)
-	{
-		if (g_fUserialActive)
-		{
-			Serial.print("*** Device - disconnected ***\n");
-			g_fUserialActive = false;
-
-			if (millis() - s_msSplash > s_msSplashMax)
-				DisplayStatus("Connect to Tactrix");
-		}
-		else
-		{
-			Serial.printf("*** Device %x:%x - connected ***\n", g_userial.idVendor(), g_userial.idProduct());
-			g_fUserialActive = true;
-
-			const u8 * pChz = g_userial.manufacturer();
-			if (pChz && *pChz)
-				Serial.printf("  manufacturer: %s\n", pChz);
-
-			pChz = g_userial.product();
-			if (pChz && *pChz)
-				Serial.printf("  product: %s\n", pChz);
-
-			pChz = g_userial.serialNumber();
-			if (pChz && *pChz)
-				Serial.printf("  Serial: %s\n", pChz);
-
-			static const int s_nUsbBaud = 115200;
-			g_userial.begin(s_nUsbBaud);
-		}
-	}
-
-	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected && g_fUserialActive)
-	{
-		if (millis() - s_msSplash > s_msSplashMax)
-			DisplayStatus("Connecting...");
-
-		if (!g_tactrix.FTryConnect())
-		{
-			g_tactrix.Disconnect();
-			delay(s_msTimeout);
-		}
-	}
-
-	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
-	{
-		if (millis() - s_msSplash > s_msSplashMax)
-			DisplayStatus("Polling ECU...");
-
-		if (!g_tactrix.FTryStartPolling())
-		{
-			g_tactrix.Disconnect();
-			delay(s_msTimeout);
-		}
-	}
-
-	if (g_tactrix.Tactrixs() == TACTRIXS_Polling)
-	{
-		if (g_tactrix.FTryUpdatePolling())
-		{
-			g_pCnvs->fillScreen(ILI9341_BLACK);
-
-			// Top half always shows boost gauge
-
-			static float s_gBoostMax = -1000.0f;
-			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
-			s_gBoostMax = max(gBoost, s_gBoostMax);
-
-			static const float s_gBoostDisplayMin = -10.0f;
-			static const float s_gBoostDisplayMax = 22.0f;
-			float uBoost = (gBoost - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
-			int dXBoost = int(128 * min(max(uBoost, 0.0f), 1.0f) + 0.5f);
-			static const int s_dYBoost = 13;
-			g_pCnvs->fillRect(0, 0, dXBoost, s_dYBoost, ILI9341_WHITE);
-
-			float uBoostMax = (s_gBoostMax - s_gBoostDisplayMin) / (s_gBoostDisplayMax - s_gBoostDisplayMin);
-			int xBoostMax = int(128 * min(max(uBoostMax, 0.0f), 1.0f) + 0.5f);
-
-			g_pCnvs->drawFastVLine(xBoostMax, 0, s_dYBoost, ILI9341_WHITE);
-
-			g_pCnvs->fillRect(6, 2, 115, 9, ILI9341_BLACK);
-			static const int s_dXMargin = 7;
-			g_pCnvs->setCursor(s_dXMargin, 3);
-			g_pCnvs->printf("Boost:% 5.1f [% 5.1f]", gBoost, s_gBoostMax);
-
-			// Bottom half normally shows coolant & intake temp, unless warnings need to be displayed.
-
-			static float s_gCoolantTempFMax = -100.0f;
-			float gCoolantTempF = g_tactrix.GParam(PARAM_CoolantTempF);
-			s_gCoolantTempFMax = max(gCoolantTempF, s_gCoolantTempFMax);
-
-			static float s_gIatFMax = -100.0f;
-			float gIatF = g_tactrix.GParam(PARAM_IatF);
-			s_gIatFMax = max(gIatF, s_gIatFMax);
-
-			u32 msCur = millis();
-
-			static float s_degFbkcMin = 1000.0f;
-			static u32 s_msFbkcEventLast = 0;
-			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
-			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
-			if (degFbkc < 0.0f)
-				s_msFbkcEventLast = msCur;
-
-			static float s_degFlkcMin = 1000.0f;
-			static u32 s_msFlkcEventLast = 0;
-			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
-			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
-			if (degFlkc < 0.0f)
-				s_msFlkcEventLast = msCur;
-
-			static float s_uIamMin = 1.0f;
-			float uIam = g_tactrix.GParam(PARAM_Iam);
-			s_uIamMin = min(uIam, s_uIamMin);
-
-			g_pCnvs->setCursor(s_dXMargin, 15);
-			bool fWarned = false;
-
-			// Invert bottom half of screen
-
-			// g_pCnvs->fillRect(0, 14, 128, 18, ILI9341_WHITE);
-			// g_pCnvs->setTextColor(ILI9341_BLACK);
-
-			if (s_uIamMin < 1.0f)
-			{
-				g_pCnvs->printf(
-						"  IAM:% 5.2f [% 5.2f]\n",
-						uIam,
-						s_uIamMin);
-
-				g_pCnvs->setCursor(s_dXMargin, g_pCnvs->getCursorY() + 1);
-
-				fWarned = true;
-			}
-
-			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msDisplayWarning)
-			{
-				g_pCnvs->printf(
-						" FBKC:% 5.2f [% 5.2f]\n",
-						degFbkc,
-						s_degFbkcMin);
-
-				g_pCnvs->setCursor(s_dXMargin, g_pCnvs->getCursorY() + 1);
-
-				fWarned = true;
-			}
-
-			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msDisplayWarning)
-			{
-				g_pCnvs->printf(
-						" FLKC:% 5.2f [% 5.2f]\n",
-						degFlkc,
-						s_degFlkcMin);
-
-				g_pCnvs->setCursor(s_dXMargin, g_pCnvs->getCursorY() + 1);
-
-				fWarned = true;
-			}
-
-			if (!fWarned)
-			{
-				// g_pCnvs->fillRect(0, 14, 128, 18, ILI9341_BLACK);
-				// g_pCnvs->setTextColor(ILI9341_WHITE);
-
-				g_pCnvs->printf("  ECT:% 5.0f [% 5.0f]\n", gCoolantTempF, s_gCoolantTempFMax);
-
-				g_pCnvs->setCursor(s_dXMargin, g_pCnvs->getCursorY() + 1);
-
-				g_pCnvs->printf("  IAT:% 5.0f [% 5.0f]\n", gIatF, s_gIatFMax);
-			}
-
-			static u32 s_usPrev = 0;
-			u32 usStart = micros();
-
-			g_tft.writeRect8BPP(0, 0, g_pCnvs->width(), g_pCnvs->height(), g_pCnvs->getBuffer(), g_aColorPalette);
-			u32 usWriteRect = micros() - usStart;
-			static int s_cProfile = 20;
-			if (--s_cProfile >= 0)
-			{
-				Serial.print("writeRect: ");
-				Serial.println(usWriteRect);
-
-				u32 usLoop = usStart - s_usPrev;
-				s_usPrev = usStart;
-				Serial.print("Loop: ");
-				Serial.println(usLoop);
-			}
+			g_pCnvs->drawLine(
+						s_xBoostCenter,
+						s_yBoostCenter,
+						s_xBoostCenter - s_sNeedle * gCosBoost,
+						s_yBoostCenter - s_sNeedle * gSinBoost,
+						s_iColorWhite);
 
 #if !TEST_OFFLINE
 			// Log if we displayed a warning
 
-			if (fWarned)
+			if (fWriteToLog)
 			{
 				if (!s_fileLog && s_nLogSuffix >= 0)
 				{
@@ -1892,8 +1852,8 @@ void loop()
 				}
 			}
 
-			static bool s_fWarnedLastUpdate = false;
-			if (!fWarned && s_fWarnedLastUpdate && s_fileLog)
+			static bool s_fWriteToLogPrev = false;
+			if (!fWriteToLog && s_fWriteToLogPrev && s_fileLog)
 			{
 				// Flush to SD card
 
@@ -1902,12 +1862,12 @@ void loop()
 				Trace("Flushed file.\n");
 			}
 
-			s_fWarnedLastUpdate = fWarned;
+			s_fWriteToLogPrev = fWriteToLog;
 #endif // !TEST_OFFLINE
 		}
 		else
 		{
-			if (millis() - s_msSplash > s_msSplashMax)
+			if (msCur > s_msSplashMax)
 				DisplayStatus("Polling Error");
 
 			g_tactrix.Disconnect();
@@ -1938,4 +1898,6 @@ void loop()
 	}
 
 	Serial.flush();
+
+	UpdateTft();
 }
