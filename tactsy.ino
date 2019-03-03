@@ -15,7 +15,7 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
 
@@ -58,7 +58,7 @@ enum PARAM
 	PARAM_FlkcDeg,
 	PARAM_BoostPsi,
 	PARAM_Iam,
-	PARAM_CoolantTempF,	// BB (jasminp) Currently unused
+	PARAM_CoolantTempF,	// BB (jpatry) Currently unused
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
 	PARAM_IatF,
@@ -291,7 +291,7 @@ inline void TraceHex(bool f, const u8 * aB, u16 cB)
 
 
 
-// BB (jasminp) Assigning __LINE__ to nAssertLine is necessary to get rid of warning about 'large integer implicitly
+// BB (jpatry) Assigning __LINE__ to nAssertLine is necessary to get rid of warning about 'large integer implicitly
 //	truncated to unsigned type'.
 
 #define ASSERT(f)								\
@@ -320,11 +320,11 @@ bool g_fUserialActive = false;
 
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
-static const u32 s_msTimeout = 2000;
+static const u32 s_dMsTimeoutDefault = 2000;
 
 
 
-// NOTE (jasminp) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
+// NOTE (jpatry) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
 //	https://github.com/NikolaKozina/j2534/blob/master/j2534.c . This fork (by one of the RomRaider devs) looks to be
 //	more up to date: https://github.com/dschultzca/j2534/blob/master/j2534.c
 
@@ -344,6 +344,13 @@ enum MSGK
 	MSGK_Min = 0,
 	MSGK_Nil = -1
 };
+
+// BB (jpatry) why doesn't this work? Compiler says "MSGK does not name a type".
+// MSGK & operator++(MSGK & msgk)
+// {
+// 	msgk = MSGK(msgk + 1);
+// 	return msgk;
+// }
 
 static const char * s_mpMsgkPChz[] =
 {
@@ -376,7 +383,7 @@ CASSERT(DIM(s_mpMsgkBType) == MSGK_Max);
 struct SJ2534Ar	// tag = ar
 {
 	u8	m_aBHeader[2];			// "ar"
-	u8	m_nProtocol;			// E.g. 3 for ISO9141
+	u8	m_nProtocol;			// E.g. '3' for ISO9141
 	u8	m_cBPlus1;				// length including m_bType
 	u8	m_bType;				// s_mpMsgkBType[msgk]
 	u8	m_aB[0];				// Payload
@@ -573,10 +580,10 @@ protected:
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
 
-	int				CBReceive(u32 msTimeout);
+	int				CBReceive(u32 dMsTimeout);
 	void			ResetReceive();
-	bool			FTryReceiveMessage(const char * pChz);
-	bool			FMustReceiveMessage(const char * pChz);
+	bool			FTryReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FMustReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
 	int				CBMessage()
 						{ return m_iBRecv - m_iBRecvPrev; }
 	u8 *			PBMessage()
@@ -586,8 +593,11 @@ protected:
 	u8 *			PBRemaining()
 						{ return &m_aBRecv[m_iBRecv]; }
 
-	bool			FTryReceiveMessage(MSGK msgk);
-	bool			FMustReceiveMessage(MSGK msgk);
+	bool			FTryReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FMustReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FTrySkipMessage(u32 dMsTimeout = s_dMsTimeoutDefault);
+
+	bool			FTryIssueReadRequest();
 
 	void			FlushIncoming();
 
@@ -635,7 +645,7 @@ void CTactrix::SendCommand(const char * pChz)
 	SendCommand((const u8 *)pChz, strlen(pChz));
 }
 
-int CTactrix::CBReceive(u32 msTimeout)
+int CTactrix::CBReceive(u32 dMsTimeout)
 {
 	ResetReceive();
 
@@ -666,7 +676,7 @@ int CTactrix::CBReceive(u32 msTimeout)
 			return m_cBRecv;
 		}
 
-		if (msTimeout > 0 && millis() - msStart > msTimeout)
+		if (dMsTimeout > 0 && millis() - msStart > dMsTimeout)
 			return 0;
 
 		delayMicroseconds(100);
@@ -680,13 +690,13 @@ void CTactrix::ResetReceive()
 	m_iBRecvPrev = 0;
 }
 
-bool CTactrix::FTryReceiveMessage(const char * pChz)
+bool CTactrix::FTryReceiveMessage(const char * pChz, u32 dMsTimeout)
 {
 	int cCh = strlen(pChz);
 
 	if (CBRemaining() == 0)
 	{
-		if (CBReceive(s_msTimeout) == 0)
+		if (CBReceive(dMsTimeout) == 0)
 		{
 			Trace(true, "FTryReceiveMessage timed out waiting for reply \"");
 			for (int iCh = 0; iCh < cCh; ++iCh)
@@ -708,9 +718,9 @@ bool CTactrix::FTryReceiveMessage(const char * pChz)
 	return true;
 }
 
-bool CTactrix::FMustReceiveMessage(const char * pChz)
+bool CTactrix::FMustReceiveMessage(const char * pChz, u32 dMsTimeout)
 {
-	if (!FTryReceiveMessage(pChz))
+	if (!FTryReceiveMessage(pChz, dMsTimeout))
 	{
 		ResetReceive();
 
@@ -731,11 +741,11 @@ bool CTactrix::FMustReceiveMessage(const char * pChz)
 	return true;
 }
 
-bool CTactrix::FTryReceiveMessage(MSGK msgk)
+bool CTactrix::FTryReceiveMessage(MSGK msgk, u32 dMsTimeout)
 {
 	if (CBRemaining() == 0)
 	{
-		if (CBReceive(s_msTimeout) == 0)
+		if (CBReceive(dMsTimeout) == 0)
 		{
 			Trace(true, "Timed out waiting for message type ");
 			Trace(true, s_mpMsgkPChz[msgk]);
@@ -814,9 +824,9 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 	return true;
 }
 
-bool CTactrix::FMustReceiveMessage(MSGK msgk)
+bool CTactrix::FMustReceiveMessage(MSGK msgk, u32 dMsTimeout)
 {
-	if (!FTryReceiveMessage(msgk))
+	if (!FTryReceiveMessage(msgk, dMsTimeout))
 	{
 		ResetReceive();
 
@@ -828,6 +838,30 @@ bool CTactrix::FMustReceiveMessage(MSGK msgk)
 	}
 
 	return true;
+}
+
+bool CTactrix::FTrySkipMessage(u32 dMsTimeout)
+{
+	if (CBRemaining() == 0)
+	{
+		if (dMsTimeout == 0)
+		{
+			return false;
+		}
+		else if (CBReceive(dMsTimeout) == 0)
+		{
+			Trace(true, "Timed out trying to skip message\n");
+			return false;
+		}
+	}
+
+	for (MSGK msgk = MSGK_Min; msgk < MSGK_Max; msgk = MSGK(msgk + 1))
+	{
+		if (FTryReceiveMessage(msgk, 0))
+			return true;
+	}
+
+	return false;
 }
 
 void CTactrix::FlushIncoming()
@@ -928,7 +962,7 @@ bool CTactrix::FTryConnect()
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
 	//	Parameter ID = PARITY (0x16 or 22) -- default is NO_PARITY (0)
 	//	Value = NO_PARITY (0)
-	// BB (jasminp) Redundant?
+	// BB (jpatry) Redundant?
 
 	SendCommand("ats3 22 0 9\r\n");
 	if (!FMustReceiveMessage("aro 9\r\n"))
@@ -1015,7 +1049,7 @@ bool CTactrix::FTryStartPolling()
 			}
 		}
 
-		// BB (jasminp) Validate SSM reply?
+		// BB (jpatry) Validate SSM reply?
 
 		Trace(true, "SSM Init Reply: ");
 		TraceHex(true, aBSsmInitReply, cBSsmInitReply);
@@ -1023,6 +1057,11 @@ bool CTactrix::FTryStartPolling()
 	}
 #endif // TEST_OFFLINE
 
+	return FTryIssueReadRequest();
+}
+
+bool CTactrix::FTryIssueReadRequest()
+{
 	{
 		// Issue address read request (A8)
 
@@ -1119,21 +1158,12 @@ bool CTactrix::FTryUpdatePolling()
 
 	u32 msCur = millis();
 
-	static const int s_dMsPollingRestart = 10 * 1000;
-	if (msCur - m_msPollingStart > s_dMsPollingRestart)
-	{
-		Trace(true, "Restart polling...\n");
-		m_tactrixs = TACTRIXS_Connected;
-		FlushIncoming();
-		if (!FTryStartPolling())
-			return false;
-	}
-
 #if !TEST_OFFLINE
 	bool fReceivedReply = false;
 	for (int i = 0; i < 10; ++i)
 	{
-		if (FTryReceiveMessage(MSGK_ReplyStart))
+		static const int s_dMsReplyStartTimeout = 300;
+		if (FTryReceiveMessage(MSGK_ReplyStart, s_dMsReplyStartTimeout))
 		{
 			if (FMustReceiveMessage(MSGK_Reply))
 			{
@@ -1155,7 +1185,18 @@ bool CTactrix::FTryUpdatePolling()
 			if (m_cBRecv == 0)
 			{
 				Trace(true, "Timed out while waiting to receive AddressReadResponse message\n");
-				return false;
+
+				// Try to re-issue request
+
+				if (!FTryIssueReadRequest())
+					return false;
+			}
+			else
+			{
+				// Try to skip message
+
+				if (!FTrySkipMessage(0))
+					ResetReceive();	// last resort
 			}
 		}
 	}
@@ -1570,7 +1611,7 @@ void loop()
 		if (!g_tactrix.FTryConnect())
 		{
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 
@@ -1582,7 +1623,7 @@ void loop()
 		if (!g_tactrix.FTryStartPolling())
 		{
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 
@@ -1901,7 +1942,7 @@ void loop()
 				DisplayStatus("Polling Error");
 
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 	else
