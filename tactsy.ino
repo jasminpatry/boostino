@@ -13,13 +13,15 @@
 
 
 
-// Set to 1 to enable verbose USB serial logging.
+// Set to 1 to enable verbose logging.
 
 #define DEBUG 1
 
+static const bool s_fTraceComms = false;
+
 // Set to 1 to test without being plugged into the vehicle
 
-#define TEST_OFFLINE 1
+#define TEST_OFFLINE 0
 
 
 
@@ -159,23 +161,28 @@ static const u8 s_cParamLog = DIM(s_aParamLog);
 
 // Debugging support
 
-inline void Trace(const char * pChz)
+inline void Trace(bool f, const char * pChz)
 {
 #if DEBUG
-	Serial.print(pChz);
+	if (f)
+		Serial.print(pChz);
 #endif // DEBUG
 }
 
-inline void Trace(u8 b, int mode = DEC)
+inline void Trace(bool f, u8 b, int mode = DEC)
 {
 #if DEBUG
-	Serial.print(b, mode);
+	if (f)
+		Serial.print(b, mode);
 #endif // DEBUG
 }
 
 #if DEBUG
-void Trace(char ch)
+void Trace(bool f, char ch)
 {
+	if (!f)
+		return;
+
 	if (isprint(ch))
 	{
 		Serial.print(ch);
@@ -204,72 +211,80 @@ void Trace(char ch)
 	}
 }
 #else // !DEBUG
-inline void Trace(char ch)
+inline void Trace(bool f, char ch)
 {
 }
 #endif // !DEBUG
 
-inline void Trace(u16 uN, int mode = DEC)
+inline void Trace(bool f, u16 uN, int mode = DEC)
 {
 #if DEBUG
-	Serial.print(uN, mode);
+	if (f)
+		Serial.print(uN, mode);
 #endif // DEBUG
 }
 
-inline void Trace(s16 n, int mode = DEC)
+inline void Trace(bool f, s16 n, int mode = DEC)
 {
 #if DEBUG
-	Serial.print(n, mode);
+	if (f)
+		Serial.print(n, mode);
 #endif // DEBUG
 }
 
-inline void Trace(u32 uN, int mode = DEC)
+inline void Trace(bool f, u32 uN, int mode = DEC)
 {
 #if DEBUG
-	Serial.print(uN, mode);
+	if (f)
+		Serial.print(uN, mode);
 #endif // DEBUG
 }
 
-inline void Trace(int n, int mode = DEC)
+inline void Trace(bool f, int n, int mode = DEC)
 {
 #if DEBUG
-	Serial.print(n, mode);
+	if (f)
+		Serial.print(n, mode);
 #endif // DEBUG
 }
 
-inline void Trace(float g, int cDigit = 2)
+inline void Trace(bool f, float g, int cDigit = 2)
 {
 #if DEBUG
-	Serial.print(g, cDigit);
+	if (f)
+		Serial.print(g, cDigit);
 #endif // DEBUG
 }
 
 #if DEBUG
-void TraceHex(const u8 * aB, u16 cB)
+void TraceHex(bool f, const u8 * aB, u16 cB)
 {
+	if (!f)
+		return;
+
 	int iB = 0;
 	for (;;)
 	{
 		u8 b = aB[iB];
 		if (b < 0x10)
-			Trace('0');
-		Trace(b, HEX);
+			Trace(true, '0');
+		Trace(true, b, HEX);
 
 		++iB;
 		if (iB >= cB)
 			break;
 
-		Trace(' ');
+		Trace(true, ' ');
 
 		if (!(iB & 0xf))
-			Trace("\n");
+			Trace(true, "\n");
 		else if (!(iB & 0x3))
-			Trace("| ");
+			Trace(true, "| ");
 	}
-	Trace("\n");
+	Trace(true, "\n");
 }
 #else // !DEBUG
-inline void TraceHex(const u8 * aB, u16 cB)
+inline void TraceHex(bool f, const u8 * aB, u16 cB)
 {
 }
 #endif // !DEBUG
@@ -284,14 +299,14 @@ inline void TraceHex(const u8 * aB, u16 cB)
 	{											\
 		if (!(f))								\
 		{										\
-			Trace("Assert failed (");			\
-			Trace(__FILE__);					\
-			Trace(":");							\
+			Trace(true, "Assert failed (");		\
+			Trace(true, __FILE__);				\
+			Trace(true, ":");					\
 			u32 nAssertLine = __LINE__;			\
-			Trace(nAssertLine);					\
-			Trace("): ");						\
-			Trace(#f);							\
-			Trace("\n");						\
+			Trace(true, nAssertLine);			\
+			Trace(true, "): ");					\
+			Trace(true, #f);					\
+			Trace(true, "\n");					\
 		}										\
 	} while(0);
 
@@ -453,7 +468,7 @@ bool SSsm::FVerifyChecksum() const
 	}
 	else
 	{
-		Trace("SSM checksum error\n");
+		Trace(true, "SSM checksum error\n");
 		return false;
 	}
 }
@@ -534,6 +549,7 @@ class CTactrix
 public:
 					CTactrix()
 					: m_tactrixs(TACTRIXS_Disconnected),
+					  m_msPollingStart(0),
 					  m_aBRecv(),
 					  m_cBRecv(0),
 					  m_iBRecv(0),
@@ -578,6 +594,7 @@ protected:
 	void			ProcessParamValue(PARAM param, u32 nValue);
 
 	TACTRIXS		m_tactrixs;						// Current state
+	u32				m_msPollingStart;				// Timestamp when polling started
 	u8				m_aBRecv[4096];					// Receive buffer
 	int				m_cBRecv;						// Total bytes in receive buffer
 	int				m_iBRecv;						// Index of remaining data in receive buffer
@@ -590,27 +607,27 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 {
 	if (!g_userial)
 	{
-		Trace("SendCommand: Can't send, not connected\n");
+		Trace(true, "SendCommand: Can't send, not connected\n");
 		m_tactrixs = TACTRIXS_Disconnected;
 		return;
 	}
 
-	Trace("Sending ");
-	Trace(cB);
-	Trace(" bytes:\n\"");
+	Trace(s_fTraceComms, "Sending ");
+	Trace(s_fTraceComms, cB);
+	Trace(s_fTraceComms, " bytes:\n\"");
 
 	for (int iB = 0; iB < cB; ++iB)
 	{
 		u8 b = aB[iB];
 
-		Trace(char(b));
+		Trace(s_fTraceComms, char(b));
 
 		g_userial.write(b);
 	}
 
-	Trace("\"\n");
+	Trace(s_fTraceComms, "\"\n");
 
-	TraceHex(aB, cB);
+	TraceHex(s_fTraceComms, aB, cB);
 }
 
 void CTactrix::SendCommand(const char * pChz)
@@ -624,7 +641,7 @@ int CTactrix::CBReceive(u32 msTimeout)
 
 	if (!g_userial)
 	{
-		Trace("CBReceive: Can't receive, no serial USB device connected\n");
+		Trace(true, "CBReceive: Can't receive, no serial USB device connected\n");
 		m_tactrixs = TACTRIXS_Disconnected;
 		return 0;
 	}
@@ -636,14 +653,14 @@ int CTactrix::CBReceive(u32 msTimeout)
 		if (m_cBRecv > 0)
 		{
 #if DEBUG
-			Trace("Received ");
-			Trace(m_cBRecv);
-			Trace(" bytes:\n\"");
+			Trace(s_fTraceComms, "Received ");
+			Trace(s_fTraceComms, m_cBRecv);
+			Trace(s_fTraceComms, " bytes:\n\"");
 			for (int iB = 0; iB < m_cBRecv; ++iB)
-				Trace(char(m_aBRecv[iB]));
-			Trace("\"\n");
+				Trace(s_fTraceComms, char(m_aBRecv[iB]));
+			Trace(s_fTraceComms, "\"\n");
 
-			TraceHex(m_aBRecv, m_cBRecv);
+			TraceHex(s_fTraceComms, m_aBRecv, m_cBRecv);
 #endif // DEBUG
 
 			return m_cBRecv;
@@ -671,10 +688,10 @@ bool CTactrix::FTryReceiveMessage(const char * pChz)
 	{
 		if (CBReceive(s_msTimeout) == 0)
 		{
-			Trace("FTryReceiveMessage timed out waiting for reply \"");
+			Trace(true, "FTryReceiveMessage timed out waiting for reply \"");
 			for (int iCh = 0; iCh < cCh; ++iCh)
-				Trace(pChz[iCh]);
-			Trace("\"\n");
+				Trace(true, pChz[iCh]);
+			Trace(true, "\"\n");
 			return false;
 		}
 	}
@@ -700,11 +717,11 @@ bool CTactrix::FMustReceiveMessage(const char * pChz)
 #if DEBUG
 		if (CBRemaining())
 		{
-			Trace("FMustReceiveMessage got unexpected reply (expected \"");
+			Trace(true, "FMustReceiveMessage got unexpected reply (expected \"");
 			int cCh = strlen(pChz);
 			for (int iCh = 0; iCh < cCh; ++iCh)
-				Trace(pChz[iCh]);
-			Trace("\")\n");
+				Trace(true, pChz[iCh]);
+			Trace(true, "\")\n");
 		}
 #endif // DEBUG
 
@@ -720,9 +737,9 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 	{
 		if (CBReceive(s_msTimeout) == 0)
 		{
-			Trace("Timed out waiting for message type ");
-			Trace(s_mpMsgkPChz[msgk]);
-			Trace("\n");
+			Trace(true, "Timed out waiting for message type ");
+			Trace(true, s_mpMsgkPChz[msgk]);
+			Trace(true, "\n");
 			return false;
 		}
 	}
@@ -781,13 +798,13 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 		break;
 
 	default:
-		Trace("FTryReceiveMessage called with invalid msgk\n");
+		Trace(true, "FTryReceiveMessage called with invalid msgk\n");
 		return false;
 	}
 
 	if (cBMsg > cBRem)
 	{
-		Trace("FTryReceiveMessage received malformed message (cBMsg > cBRem)\n");
+		Trace(true, "FTryReceiveMessage received malformed message (cBMsg > cBRem)\n");
 		return false;
 	}
 
@@ -803,9 +820,9 @@ bool CTactrix::FMustReceiveMessage(MSGK msgk)
 	{
 		ResetReceive();
 
-		Trace("FMustReceiveMessage failed for message type ");
-		Trace(s_mpMsgkPChz[msgk]);
-		Trace("\n");
+		Trace(true, "FMustReceiveMessage failed for message type ");
+		Trace(true, s_mpMsgkPChz[msgk]);
+		Trace(true, "\n");
 
 		return false;
 	}
@@ -815,16 +832,16 @@ bool CTactrix::FMustReceiveMessage(MSGK msgk)
 
 void CTactrix::FlushIncoming()
 {
-	Trace("Flushing incoming data...\n");
+	Trace(true, "Flushing incoming data...\n");
 
 	while (g_userial.available())
 	{
 		u8 b = g_userial.read();
 
-		Trace(char(b));
+		Trace(true, char(b));
 	}
 
-	Trace("FlushIncoming done.\n");
+	Trace(true, "FlushIncoming done.\n");
 }
 
 bool CTactrix::FTryConnect()
@@ -988,7 +1005,7 @@ bool CTactrix::FTryStartPolling()
 			u8 cBPayload = pAr->CBPayload();
 			if (cBSsmInitReply + cBPayload > sizeof(aBSsmInitReply))
 			{
-				Trace("Overflow of SSM init reply buffer\n");
+				Trace(true, "Overflow of SSM init reply buffer\n");
 				return false;
 			}
 			else
@@ -1000,9 +1017,9 @@ bool CTactrix::FTryStartPolling()
 
 		// BB (jasminp) Validate SSM reply?
 
-		Trace("SSM Init Reply: ");
-		TraceHex(aBSsmInitReply, cBSsmInitReply);
-		Trace("\n");
+		Trace(true, "SSM Init Reply: ");
+		TraceHex(true, aBSsmInitReply, cBSsmInitReply);
+		Trace(true, "\n");
 	}
 #endif // TEST_OFFLINE
 
@@ -1018,7 +1035,7 @@ bool CTactrix::FTryStartPolling()
 
 		if (cBSsmRead > s_cBSsmMax)
 		{
-			Trace("SSM packet overflow (trying to read too many params)\n");
+			Trace(true, "SSM packet overflow (trying to read too many params)\n");
 			return false;
 		}
 
@@ -1074,7 +1091,7 @@ bool CTactrix::FTryStartPolling()
 			if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
 				memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
 			{
-				Trace("Loopback error\n");
+				Trace(true, "Loopback error\n");
 				return false;
 			}
 
@@ -1090,6 +1107,7 @@ bool CTactrix::FTryStartPolling()
 	}
 
 	m_tactrixs = TACTRIXS_Polling;
+	m_msPollingStart = millis();
 
 	return true;
 }
@@ -1098,6 +1116,18 @@ bool CTactrix::FTryUpdatePolling()
 {
 	if (m_tactrixs != TACTRIXS_Polling || !g_userial)
 		return false;
+
+	u32 msCur = millis();
+
+	static const int s_dMsPollingRestart = 10 * 1000;
+	if (msCur - m_msPollingStart > s_dMsPollingRestart)
+	{
+		Trace(true, "Restart polling...\n");
+		m_tactrixs = TACTRIXS_Connected;
+		FlushIncoming();
+		if (!FTryStartPolling())
+			return false;
+	}
 
 #if !TEST_OFFLINE
 	bool fReceivedReply = false;
@@ -1124,7 +1154,7 @@ bool CTactrix::FTryUpdatePolling()
 		{
 			if (m_cBRecv == 0)
 			{
-				Trace("Timed out while waiting to receive AddressReadResponse message\n");
+				Trace(true, "Timed out while waiting to receive AddressReadResponse message\n");
 				return false;
 			}
 		}
@@ -1132,7 +1162,7 @@ bool CTactrix::FTryUpdatePolling()
 
 	if (!fReceivedReply)
 	{
-		Trace("Failed to received AddressReadResponse message after 10 tries\n");
+		Trace(true, "Failed to received AddressReadResponse message after 10 tries\n");
 		return false;
 	}
 
@@ -1142,7 +1172,7 @@ bool CTactrix::FTryUpdatePolling()
 
 	if (pSsm->CBData() != m_cBParamPoll)
 	{
-		Trace("Received incorrect number of bytes in AddressReadResponse\n");
+		Trace(true, "Received incorrect number of bytes in AddressReadResponse\n");
 		return false;
 	}
 
@@ -1169,16 +1199,16 @@ bool CTactrix::FTryUpdatePolling()
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
 
-	float gBoost = -10.0f + 30.0f * (-sinf(millis() / 1000.0f) * 0.5f + 0.5f);
+	float gBoost = -10.0f + 30.0f * (-sinf(msCur / 1000.0f) * 0.5f + 0.5f);
 	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
 
 	float uIam = 1.0f;
 	m_mpParamGValue[PARAM_Iam] = uIam;
 
-	float degFbkc = ((millis() & 0x1fff) < 0x100) ? -1.4f : 0.0f;
+	float degFbkc = ((msCur & 0x1fff) < 0x100) ? -1.4f : 0.0f;
 	m_mpParamGValue[PARAM_FbkcDeg] = degFbkc;
 
-	float degFlkc = ((millis() & 0x1fff) - 0xf0 < 0x100) ? -1.4f : 0.0f;
+	float degFlkc = ((msCur & 0x1fff) - 0xf0 < 0x100) ? -1.4f : 0.0f;
 	m_mpParamGValue[PARAM_FlkcDeg] = degFlkc;
 
 	m_mpParamGValue[PARAM_SpeedMph] = 113.0f;
@@ -1189,7 +1219,7 @@ bool CTactrix::FTryUpdatePolling()
 	// Update log
 
 	SLogEntry logent;
-	logent.m_msTimestamp = millis();
+	logent.m_msTimestamp = msCur;
 	for (int iParamLog = 0; iParamLog < s_cParamLog; ++iParamLog)
 		logent.m_mpIParamLogGValue[iParamLog] = GParam(s_aParamLog[iParamLog]);
 	g_loghist.WriteLogEntry(logent);
@@ -1253,10 +1283,10 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ASSERT(false);
 	}
 
-	Trace(s_mpParamPChz[param]);
-	Trace(": ");
-	Trace(ng.m_g);
-	Trace("\n");
+	Trace(s_fTraceComms, s_mpParamPChz[param]);
+	Trace(s_fTraceComms, ": ");
+	Trace(s_fTraceComms, ng.m_g);
+	Trace(s_fTraceComms, "\n");
 
 	m_mpParamGValue[param] = ng.m_g;
 }
@@ -1466,9 +1496,9 @@ void setup()
 			if (!SD.exists(aChzPath))
 			{
 				s_nLogSuffix = iSuffix;
-				Trace("Will use log file name '");
-				Trace(aChzPath);
-				Trace("'\n");
+				Trace(true, "Will use log file name '");
+				Trace(true, aChzPath);
+				Trace(true, "'\n");
 				break;
 			}
 		}
@@ -1793,9 +1823,9 @@ void loop()
 					s_fileLog = SD.open(aChzPath, FILE_WRITE);
 					if (s_fileLog)
 					{
-						Trace("Opened file '");
-						Trace(aChzPath);
-						Trace("' for writing.\n");
+						Trace(true, "Opened file '");
+						Trace(true, aChzPath);
+						Trace(true, "' for writing.\n");
 
 						// Write the header
 
@@ -1859,7 +1889,7 @@ void loop()
 
 				s_fileLog.flush();
 
-				Trace("Flushed file.\n");
+				Trace(true, "Flushed file.\n");
 			}
 
 			s_fWriteToLogPrev = fWriteToLog;
