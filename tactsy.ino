@@ -7,6 +7,7 @@
 #include <SD.h>
 #include <USBHost_t36.h>
 #include <Wire.h>
+#include <XPT2046_Touchscreen.h>
 
 #include "gaugeBg.h"
 #include "gaugeFg.h"
@@ -15,13 +16,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 0
+#define DEBUG 1
 
 static const bool s_fTraceComms = false;
+static const bool s_fTraceTouch = true;
 
 // Set to 1 to test without being plugged into the vehicle
 
-#define TEST_OFFLINE 0
+#define TEST_OFFLINE 1
 
 
 
@@ -1359,6 +1361,25 @@ CTactrix g_tactrix;
 
 
 
+// Touchscreen Configuration
+
+static const int s_nPinTouchCs = 8;
+static const int s_nPinTouchIrq = 2;
+
+// Calibration data for the raw touch data to the screen coordinates
+
+static const int s_xTsMin = 180;
+static const int s_yTsMin = 250;
+static const int s_xTsMax = 3700;
+static const int s_yTsMax = 3800;
+
+XPT2046_Touchscreen g_ts = XPT2046_Touchscreen(s_nPinTouchCs, s_nPinTouchIrq);
+bool g_fTouch = false;
+u16 g_xTouch;
+u16 g_yTouch;
+
+
+
 // TFT Display Configuration
 
 static const int s_dXScreen = 320;
@@ -1385,7 +1406,14 @@ CASSERT(s_iColorRed == DIM(g_aColorPalette) - 1);
 
 void UpdateTft()
 {
-	g_tft.updateRect8BPP(0, 0, s_dXScreen, s_dYScreen, g_pCnvs->getBuffer(), g_pCnvsPrev->getBuffer(), g_aColorPalette);
+	g_tft.updateRect8BPP(
+			0,
+			0,
+			s_dXScreen,
+			s_dYScreen,
+			g_pCnvs->getBuffer(),
+			g_pCnvsPrev->getBuffer(),
+			g_aColorPalette);
 }
 
 
@@ -1523,6 +1551,11 @@ void setup()
 	DrawSplashScreen();
 	UpdateTft();
 
+	if (g_ts.begin())
+		g_ts.setRotation(3);
+	else
+		Serial.println("Couldn't start touchscreen controller");
+
 	// Initialize SD Card
 
 	if (SD.begin(s_nPinSdChipSelect))
@@ -1568,6 +1601,42 @@ void loop()
 
 	if (msCur <= s_msSplashMax)
 		DrawSplashScreen();
+
+	bool fTouch = false;
+	if (!g_ts.bufferEmpty())
+	{
+		TS_Point posTouch = g_ts.getPoint();
+		static const int s_zTouchMin = 750;
+		if (posTouch.z >= s_zTouchMin)
+		{
+			fTouch = true;
+
+			Trace(s_fTraceTouch, "Touch point: ");
+			Trace(s_fTraceTouch, posTouch.x);
+			Trace(s_fTraceTouch, " ");
+			Trace(s_fTraceTouch, posTouch.y);
+			Trace(s_fTraceTouch, " ");
+			Trace(s_fTraceTouch, posTouch.z);
+			Trace(s_fTraceTouch, "\n");
+
+			g_xTouch = map(posTouch.x, s_xTsMin, s_xTsMax, 0, s_dXScreen);
+			g_yTouch = map(posTouch.y, s_yTsMin, s_yTsMax, 0, s_dYScreen);
+			g_fTouch = true;
+		}
+	}
+
+	bool fTouchRelease = false;
+	if (!fTouch && g_fTouch)
+	{
+		g_fTouch = false;
+		fTouchRelease = true;
+
+		Trace(true, "Touch release: ");
+		Trace(true, g_xTouch);
+		Trace(true, " ");
+		Trace(true, g_yTouch);
+		Trace(true, "\n");
+	}
 
 	if (g_userial != g_fUserialActive)
 	{
@@ -1636,6 +1705,10 @@ void loop()
 			// &&& clean this up
 
 			static float s_gBoostMax = -1000.0f;
+
+			if (fTouchRelease && g_xTouch >= 245 && g_yTouch >= 195)
+				s_gBoostMax = -1000.0f;
+
 			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
 
@@ -1644,6 +1717,12 @@ void loop()
 			static u32 s_msFbkcEventLast = 0;
 			static int s_cFbkcEvent = 0;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
+
+			if (fTouchRelease && g_xTouch >= 240 && g_yTouch <= 55)
+			{
+				s_degFbkcMin = 1000.0f;
+				s_cFbkcEvent = 0;
+			}
 
 			// Check if we have a new FBKC event
 
