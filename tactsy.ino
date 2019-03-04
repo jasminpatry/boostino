@@ -1245,7 +1245,7 @@ bool CTactrix::FTryUpdatePolling()
 	float gBoost = -10.0f + 30.0f * (-sinf(msCur / 1000.0f) * 0.5f + 0.5f);
 	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
 
-	float uIam = 1.0f;
+	float uIam = ((msCur & 0x1fff) - 0x1e0 < 0x100) ? 0.93f : 1.0f;
 	m_mpParamGValue[PARAM_Iam] = uIam;
 
 	float degFbkc = ((msCur & 0x1fff) < 0x100) ? -1.4f : 0.0f;
@@ -1394,13 +1394,17 @@ GFXcanvas8 * g_pCnvs = &g_aCnvs[0];
 GFXcanvas8 * g_pCnvsPrev = &g_aCnvs[1];
 uint16_t g_aColorPalette[64];
 
-static const uint8_t s_iColorWhite = 0x1F;
+static const uint8_t s_iColorBlack = 0;
+
+static const uint8_t s_iColorWhite = 31;
 CASSERT(s_iColorWhite == DIM(g_aColorPalette) / 2 - 1);
 
-static const uint8_t s_iColorGrey = 0x10;
+static const uint8_t s_iColorGrey = 16;
 
-static const uint8_t s_iColorRed = 0x3F;
+static const uint8_t s_iColorRed = 63;
 CASSERT(s_iColorRed == DIM(g_aColorPalette) - 1);
+
+static const uint8_t s_iColorIamAlert = 55;
 
 
 
@@ -1489,7 +1493,7 @@ void DrawSplashScreen()
 
 void DisplayStatus(const char * pChz)
 {
-	g_pCnvs->fillScreen(0);
+	g_pCnvs->fillScreen(s_iColorBlack);
 	g_pCnvs->setCursor(10, 50);
 	g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
 	g_pCnvs->setTextColor(s_iColorWhite);
@@ -1545,7 +1549,7 @@ void setup()
 	{
 		g_aCnvs[iCnvs].setTextColor(s_iColorWhite);
 		g_aCnvs[iCnvs].setRotation(0);
-		g_aCnvs[iCnvs].fillScreen(0x0);
+		g_aCnvs[iCnvs].fillScreen(s_iColorBlack);
 	}
 
 	DrawSplashScreen();
@@ -1606,7 +1610,7 @@ void loop()
 	if (!g_ts.bufferEmpty())
 	{
 		TS_Point posTouch = g_ts.getPoint();
-		static const int s_zTouchMin = 750;
+		static const int s_zTouchMin = 500;
 		if (posTouch.z >= s_zTouchMin)
 		{
 			fTouch = true;
@@ -1700,7 +1704,7 @@ void loop()
 	{
 		if (g_tactrix.FTryUpdatePolling())
 		{
-			g_pCnvs->fillScreen(0x0);
+			g_pCnvs->fillScreen(s_iColorBlack);
 
 			// &&& clean this up
 
@@ -1741,8 +1745,20 @@ void loop()
 			if (degFlkc < 0.0f)
 				s_msFlkcEventLast = msCur;
 
-			// &&& Do something for IAM
 			static float s_uIamMin = 1.0f;
+
+			static const float s_sRadiusIamCircle = 32;
+			static const int s_xBoostCenter = 160;
+			static const int s_yBoostCenter = 131;
+
+			if (fTouchRelease)
+			{
+				int dXTouch = g_xTouch - s_xBoostCenter;
+				int dYTouch = g_yTouch - s_yBoostCenter;
+				if (dXTouch * dXTouch + dYTouch * dYTouch < s_sRadiusIamCircle * s_sRadiusIamCircle)
+					s_uIamMin = 1.0f;
+			}
+
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
@@ -1770,8 +1786,6 @@ void loop()
 			float gSinBoost = sinf(radBoost);
 			float gCosBoost = cosf(radBoost);
 			float gCotanBoost = gCosBoost / gSinBoost;
-			static const int s_xBoostCenter = 160;
-			static const int s_yBoostCenter = 131;
 			static const int s_sNeedle = 113;
 
 			{
@@ -1928,6 +1942,35 @@ void loop()
 						s_xBoostCenter - s_sNeedle * gCosBoost,
 						s_yBoostCenter - s_sNeedle * gSinBoost,
 						s_iColorWhite);
+
+			// IAM
+
+			if (s_uIamMin < 1.0f)
+			{
+				g_pCnvs->fillCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle,
+							s_iColorIamAlert);
+				g_pCnvs->drawCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle,
+							s_iColorBlack);
+				g_pCnvs->drawCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle + 1,
+							s_iColorBlack);
+				g_pCnvs->setTextColor(s_iColorBlack);
+				const char * pChz = "IAM";
+				g_pCnvs->setCursor(s_xBoostCenter - g_tft.strPixelLen(pChz) / 2, s_yBoostCenter - 18);
+				g_pCnvs->print(pChz);
+				snprintf(aChz, DIM(aChz), "%0.2f", s_uIamMin);
+				g_pCnvs->setCursor(s_xBoostCenter - g_tft.strPixelLen(aChz) / 2, s_yBoostCenter + 2);
+				g_pCnvs->print(aChz);
+				g_pCnvs->setTextColor(s_iColorWhite);
+			}
 
 #if !TEST_OFFLINE
 			// Log if we displayed a warning
