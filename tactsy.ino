@@ -16,14 +16,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
 static const bool s_fTraceTouch = true;
 
 // Set to 1 to test without being plugged into the vehicle
 
-#define TEST_OFFLINE 1
+#define TEST_OFFLINE 0
 
 
 
@@ -1396,10 +1396,15 @@ uint16_t g_aColorPalette[64];
 
 static const uint8_t s_iColorBlack = 0;
 
+static const uint8_t s_iColorWhiteMic = 0;
+
 static const uint8_t s_iColorWhite = 31;
 CASSERT(s_iColorWhite == DIM(g_aColorPalette) / 2 - 1);
 
 static const uint8_t s_iColorGrey = 16;
+
+static const uint8_t s_iColorRedMic = 32;
+CASSERT(s_iColorRedMic == DIM(g_aColorPalette) / 2);
 
 static const uint8_t s_iColorRed = 63;
 CASSERT(s_iColorRed == DIM(g_aColorPalette) - 1);
@@ -1929,18 +1934,22 @@ void loop()
 			g_pCnvs->setCursor(284 - g_tft.strPixelLen(aChz), 214);
 			g_pCnvs->print(aChz);
 
-			g_pCnvs->drawLine(
+			// Draw gauge hands
+
+			g_pCnvs->writeLineAntialiased(
 						s_xBoostCenter,
 						s_yBoostCenter,
-						s_xBoostCenter - s_sNeedle * cos(radBoostMax),
-						s_yBoostCenter - s_sNeedle * sin(radBoostMax),
+						s_xBoostCenter - s_sNeedle * cosf(radBoostMax),
+						s_yBoostCenter - s_sNeedle * sinf(radBoostMax),
+						s_iColorRedMic,
 						s_iColorRed);
 
-			g_pCnvs->drawLine(
+			g_pCnvs->writeLineAntialiased(
 						s_xBoostCenter,
 						s_yBoostCenter,
 						s_xBoostCenter - s_sNeedle * gCosBoost,
 						s_yBoostCenter - s_sNeedle * gSinBoost,
+						s_iColorWhiteMic,
 						s_iColorWhite);
 
 			// IAM
