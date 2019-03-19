@@ -1595,12 +1595,11 @@ void setup()
 	//	very quickly (e.g., when reprogramming the Teensy, or by disconnecting the USB power momentarily), and inserting
 	//	a delay here seems to help.
 
-	delay(1000);
+	delay(2000);
 
 	// Initialize USB host interface
 
 	g_uhost.begin();
-	delay(100);
 }
 
 void loop()
@@ -1682,8 +1681,6 @@ void loop()
 
 			static const int s_nUsbBaud = 115200;
 			g_userial.begin(s_nUsbBaud);
-
-			delay(100);
 		}
 	}
 
@@ -1701,10 +1698,6 @@ void loop()
 		{
 			g_tactrix.Disconnect();
 			delay(s_dMsTimeoutDefault);
-		}
-		else
-		{
-			delay(100);
 		}
 	}
 
@@ -1724,11 +1717,13 @@ void loop()
 	{
 		if (g_tactrix.FTryUpdatePolling())
 		{
+			// Update data, handle touch events, draw gauge and log if necessary
+
 			g_pCnvs->fillScreen(s_iColorBlack);
 
-			// &&& clean this up
-
 			static float s_gBoostMax = -1000.0f;
+
+			// Check for max boost reset event
 
 			if (fTouchRelease && g_xTouch >= 245 && g_yTouch >= 195)
 				s_gBoostMax = -1000.0f;
@@ -1741,6 +1736,8 @@ void loop()
 			static u32 s_msFbkcEventLast = 0;
 			static int s_cFbkcEvent = 0;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
+
+			// Check for min FBKC reset event
 
 			if (fTouchRelease && g_xTouch >= 240 && g_yTouch <= 55)
 			{
@@ -1771,6 +1768,8 @@ void loop()
 			static const int s_xBoostCenter = 160;
 			static const int s_yBoostCenter = 131;
 
+			// Check for min IAM reset event
+
 			if (fTouchRelease)
 			{
 				int dXTouch = g_xTouch - s_xBoostCenter;
@@ -1782,24 +1781,19 @@ void loop()
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
+			// Write to log if min IAM < 1 or a knock event happened recently
+
 			bool fWriteToLog = false;
-			if (s_uIamMin < 1.0f)
-			{
-				fWriteToLog = true;
-			}
-
-			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent)
-			{
-				fWriteToLog = true;
-			}
-
-			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)
+			if (s_uIamMin < 1.0f ||
+				(s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
+				(s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent))
 			{
 				fWriteToLog = true;
 			}
 
 			g_pCnvs->setT3Font(&Exo_28_Bold_Italic);
-			g_tft.setFont(Exo_28_Bold_Italic); // &&&
+
+			// Boost gauge
 
 			float radBoost = (6.0f * gBoost + 90.0f) * s_gPi / 180.0f;
 			float radBoostMax = (6.0f * s_gBoostMax + 90.0f) * s_gPi / 180.0f;
@@ -1889,8 +1883,7 @@ void loop()
 				char chDec = aChz[cCh - 1];
 				aChz[cCh - 1] = '\0';
 
-				// &&& copy strPixelLen to adafruit_gfx
-				g_pCnvs->setCursor(138 - g_tft.strPixelLen(aChz), 175);
+				g_pCnvs->setCursor(138 - g_pCnvs->strPixelLen(aChz), 175);
 				aChz[cCh - 1] = chDec;
 				g_pCnvs->print(aChz);
 
@@ -1906,19 +1899,18 @@ void loop()
 
 				float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
-				g_pCnvs->setCursor(65 - g_tft.strPixelLen(aChz), 10);
+				g_pCnvs->setCursor(65 - g_pCnvs->strPixelLen(aChz), 10);
 				g_pCnvs->print(aChz);
 			}
 
 			g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
-			g_tft.setFont(Exo_16_Bold_Italic); // &&&
 
 			{
 				// Draw IAT
 
 				float gIatF = g_tactrix.GParam(PARAM_IatF);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gIatF)));
-				g_pCnvs->setCursor(51 - g_tft.strPixelLen(aChz), 214);
+				g_pCnvs->setCursor(51 - g_pCnvs->strPixelLen(aChz), 214);
 				g_pCnvs->print(aChz);
 			}
 
@@ -1933,20 +1925,20 @@ void loop()
 			{
 				snprintf(aChz, DIM(aChz), "%.2f", s_degFbkcMin);
 			}
-			g_pCnvs->setCursor(301 - g_tft.strPixelLen(aChz), 26);
+			g_pCnvs->setCursor(301 - g_pCnvs->strPixelLen(aChz), 26);
 			g_pCnvs->print(aChz);
 
 			// Draw FBKC count
 
 			snprintf(aChz, DIM(aChz), "%d", s_cFbkcEvent);
-			g_pCnvs->setCursor(297 - g_tft.strPixelLen(aChz), 48);
+			g_pCnvs->setCursor(297 - g_pCnvs->strPixelLen(aChz), 48);
 			g_pCnvs->print(aChz);
 			g_pCnvs->setTextColor(s_iColorWhite);
 
 			// Draw max boost
 
 			snprintf(aChz, DIM(aChz), "%.1f", s_gBoostMax);
-			g_pCnvs->setCursor(284 - g_tft.strPixelLen(aChz), 214);
+			g_pCnvs->setCursor(284 - g_pCnvs->strPixelLen(aChz), 214);
 			g_pCnvs->print(aChz);
 
 			// Draw gauge hands
@@ -1988,10 +1980,10 @@ void loop()
 							s_iColorBlack);
 				g_pCnvs->setTextColor(s_iColorBlack);
 				const char * pChz = "IAM";
-				g_pCnvs->setCursor(s_xBoostCenter - g_tft.strPixelLen(pChz) / 2, s_yBoostCenter - 18);
+				g_pCnvs->setCursor(s_xBoostCenter - g_pCnvs->strPixelLen(pChz) / 2, s_yBoostCenter - 18);
 				g_pCnvs->print(pChz);
 				snprintf(aChz, DIM(aChz), "%0.2f", s_uIamMin);
-				g_pCnvs->setCursor(s_xBoostCenter - g_tft.strPixelLen(aChz) / 2, s_yBoostCenter + 2);
+				g_pCnvs->setCursor(s_xBoostCenter - g_pCnvs->strPixelLen(aChz) / 2, s_yBoostCenter + 2);
 				g_pCnvs->print(aChz);
 				g_pCnvs->setTextColor(s_iColorWhite);
 			}
