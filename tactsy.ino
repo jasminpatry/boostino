@@ -1591,12 +1591,6 @@ void setup()
 		Serial.println("SD card failed, or not present");
 	}
 
-	// BB (jpatry) Tactrix dongle sometimes freezes during startup. I can reproduce it by disconnecting and reconnecting
-	//	very quickly (e.g., when reprogramming the Teensy, or by disconnecting the USB power momentarily), and inserting
-	//	a delay here seems to help.
-
-	delay(2000);
-
 	// Initialize USB host interface
 
 	g_uhost.begin();
