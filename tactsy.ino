@@ -1507,92 +1507,91 @@ void DisplayStatus(const char * pChz)
 
 
 
-bool FTryUpdateLog(const char * pChzPath, File * pFile)
+// SD Card Configuration
+
+static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
+static const char * s_pChzLogPrefix = "log";
+static const char * s_pChzLogSuffix = ".csv";
+static const int s_cLogFileMax = 1000;
+static int s_nLogSuffix = 0;
+static File s_fileLog;
+
+
+
+void UpdateLog()
 {
-	if (!*pFile)
+	if (!s_fileLog)
 	{
 		// Open the log file
 
-		bool fWriteHeader = !SD.exists(pChzPath);
-		*pFile = SD.open(pChzPath, FILE_WRITE | O_APPEND);
-		if (*pFile)
+		char aChzPath[32];
+		snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, s_nLogSuffix, s_pChzLogSuffix);
+
+		bool fWriteHeader = !SD.exists(aChzPath);
+		s_fileLog = SD.open(aChzPath, FILE_WRITE | O_APPEND);
+
+		if (s_fileLog)
 		{
 			Trace(true, "Opened file '");
-			Trace(true, pChzPath);
+			Trace(true, aChzPath);
 			Trace(true, "' for append.\n");
 
 			if (fWriteHeader)
 			{
 				// Write the header
 
-				pFile->print("Time (msec),");
+				s_fileLog.print("Time (msec),");
 				for (int iParamLog = 0;;)
 				{
-					pFile->print(s_mpParamPChz[s_aParamLog[iParamLog]]);
+					s_fileLog.print(s_mpParamPChz[s_aParamLog[iParamLog]]);
 
 					if (++iParamLog >= s_cParamLog)
 						break;
 
-					pFile->print(",");
+					s_fileLog.print(",");
 				}
 
-				pFile->println();
+				s_fileLog.println();
 			}
 		}
 		else
 		{
+			// Don't try to open again
+
+			s_nLogSuffix = 0;
+
 			Serial.print("Failed to open file '");
-			Serial.print(pChzPath);
+			Serial.print(aChzPath);
 			Serial.print("' for writing. Is SD card full?\n");
 
-			return false;
+			return;
 		}
 	}
 
-	if (*pFile)
+	// Write the log history
+
+	while (!g_loghist.FIsEmpty())
 	{
-		// Write the log history
+		const SLogEntry & logent = g_loghist.LogentRead();
 
-		while (!g_loghist.FIsEmpty())
+		s_fileLog.print(logent.m_msTimestamp);
+
+		s_fileLog.print(",");
+
+		CASSERT(s_cParamLog > 0);
+		for (int iParamLog = 0;;)
 		{
-			const SLogEntry & logent = g_loghist.LogentRead();
+			s_fileLog.print(logent.m_mpIParamLogGValue[iParamLog], 3);
 
-			pFile->print(logent.m_msTimestamp);
+			if (++iParamLog >= s_cParamLog)
+				break;
 
-			pFile->print(",");
-
-			CASSERT(s_cParamLog > 0);
-			for (int iParamLog = 0;;)
-			{
-				pFile->print(logent.m_mpIParamLogGValue[iParamLog], 3);
-
-				if (++iParamLog >= s_cParamLog)
-					break;
-
-				pFile->print(",");
-			}
-
-			pFile->println();
+			s_fileLog.print(",");
 		}
+
+		s_fileLog.println();
 	}
-
-	return true;
 }
-
-
-
-// SD Card Configuration
-
-static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
-static const char * s_pChzKnockLogPrefix = "kn";
-static const char * s_pChzPullLogPrefix = "pl";
-static const char * s_pChzLogSuffix = ".csv";
-static const int s_cLogFileMax = 1000;
-static int s_nKnockLogSuffix = 0;
-static int s_nPullLogSuffix = 0;
-static int s_nPullLogSubSuffix = 1;
-static File s_fileKnockLog;
-static File s_filePullLog;
 
 
 
@@ -1647,30 +1646,16 @@ void setup()
 
 	if (SD.begin(s_nPinSdChipSelect))
 	{
-		// Determine log file indices
+		// Determine log file index
 
 		for (int iSuffix = 1; iSuffix < s_cLogFileMax; ++iSuffix)
 		{
 			char aChzPath[32];
-			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzKnockLogPrefix, iSuffix, s_pChzLogSuffix);
+			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
 			if (!SD.exists(aChzPath))
 			{
-				s_nKnockLogSuffix = iSuffix;
-				Trace(true, "Will use knock log file name '");
-				Trace(true, aChzPath);
-				Trace(true, "'\n");
-				break;
-			}
-		}
-
-		for (int iSuffix = 1; iSuffix < s_cLogFileMax; ++iSuffix)
-		{
-			char aChzPath[32];
-			snprintf(aChzPath, DIM(aChzPath), "%s%d-1%s", s_pChzPullLogPrefix, iSuffix, s_pChzLogSuffix);
-			if (!SD.exists(aChzPath))
-			{
-				s_nPullLogSuffix = iSuffix;
-				Trace(true, "Will use pull log file name '");
+				s_nLogSuffix = iSuffix;
+				Trace(true, "Will use log file name '");
 				Trace(true, aChzPath);
 				Trace(true, "'\n");
 				break;
@@ -1866,22 +1851,31 @@ void loop()
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
-			// Write to pull log if throttle is > 95%
+			// Check if doing a WOT pull
 
+			static const int s_cWotThreshold = 20;
+			CASSERT(s_cWotThreshold < s_cEntryLogHistory);
+
+			static int s_cWot = 0;
 			float gThrottlePct = g_tactrix.GParam(PARAM_ThrottlePct);
-			bool fWriteToPullLog = (s_nPullLogSuffix && gThrottlePct > 95.0f);
+			if (gThrottlePct > 95.0f)
+				++s_cWot;
+			else
+				s_cWot = 0;
 
-			// Write to log if min IAM < 1 or a knock event happened recently, and we're not logging a pull
+			// Write to log if WOT for long enough, or if min IAM < 1 or a knock event happened recently
 
-			bool fWriteToKnockLog = (s_nKnockLogSuffix &&
-									 !fWriteToPullLog &&
-									 (s_uIamMin < 1.0f ||
-									  (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
-									  (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)));
+			bool fWriteToLog = (s_nLogSuffix &&
+								(s_cWot >= s_cWotThreshold ||
+								 s_uIamMin < 1.0f ||
+								 (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
+								 (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)));
 
 			g_pCnvs->setT3Font(&Exo_28_Bold_Italic);
 
 			// Boost gauge
+			// NOTE (jpatry) Angles measured CCW from +X axis (3 o'clock).
+			//	Boost of 0 = 12 o'clock; -15 = 9 o'clock; +15 = 3 o'clock.
 
 			float radBoost = (6.0f * gBoost + 90.0f) * s_gPi / 180.0f;
 			float radBoostMax = (6.0f * s_gBoostMax + 90.0f) * s_gPi / 180.0f;
@@ -2077,66 +2071,13 @@ void loop()
 			}
 
 #if !TEST_OFFLINE
-			// Close log files if needed
-
-			if (!fWriteToPullLog && s_filePullLog)
+			if (fWriteToLog)
 			{
-				s_filePullLog.close();
-				++s_nPullLogSubSuffix;
+				UpdateLog();
 			}
-
-			if (!fWriteToKnockLog && s_fileKnockLog)
+			else if (s_fileLog)
 			{
-				s_fileKnockLog.close();
-			}
-
-			// Log if we're in a pull
-
-			if (fWriteToPullLog)
-			{
-				char aChzPath[32];
-				if (!s_filePullLog)
-				{
-					snprintf(
-						aChzPath,
-						DIM(aChzPath),
-						"%s%d-%d%s",
-						s_pChzPullLogPrefix,
-						s_nPullLogSuffix,
-						s_nPullLogSubSuffix,
-						s_pChzLogSuffix);
-				}
-
-				if (!FTryUpdateLog(aChzPath, &s_filePullLog))
-				{
-					// Failed; don't try again
-
-					s_nPullLogSuffix = 0;
-				}
-			}
-
-			// Log if we displayed a warning
-
-			if (fWriteToKnockLog)
-			{
-				char aChzPath[32];
-				if (!s_fileKnockLog)
-				{
-					snprintf(
-						aChzPath,
-						DIM(aChzPath),
-						"%s%d%s",
-						s_pChzKnockLogPrefix,
-						s_nKnockLogSuffix,
-						s_pChzLogSuffix);
-				}
-
-				if (!FTryUpdateLog(aChzPath, &s_fileKnockLog))
-				{
-					// Failed; don't try again
-
-					s_nKnockLogSuffix = 0;
-				}
+				s_fileLog.close();
 			}
 #endif // !TEST_OFFLINE
 		}
