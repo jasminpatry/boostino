@@ -66,6 +66,8 @@ enum PARAM
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
+	PARAM_IpwMs,
+	PARAM_IdcPct,		// NOTE (jasminp) calculated from PARAM_Rpm and PARAM_IpwMs
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -90,6 +92,8 @@ static const char * s_mpParamPChz[] =
 	"Intake Air Temperature (F)",						// PARAM_IatF
 	"Throttle Opening Angle (%)",						// PARAM_ThrottlePct
 	"Vehicle Speed (mph)",								// PARAM_SpeedMph
+	"Fuel Injector #1 Pulse Width",						// PARAM_IpwMs
+	"Injector Duty Cycle",								// PARAM_IdcPct
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -106,6 +110,8 @@ static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
 	{ 0x00, 0x00, 0x15 },		// PARAM_ThrottlePct
 	{ 0x00, 0x00, 0x10 },		// PARAM_SpeedMph
+	{ 0x00, 0x00, 0x20 },		// PARAM_IpwMs
+	{ 0x00, 0x00, 0x00 },		// PARAM_IdcPct
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -121,6 +127,8 @@ static const u8 s_mpParamCB[] =
 	 1,							// PARAM_IatF
 	 1,							// PARAM_ThrottlePct
 	 1,							// PARAM_SpeedMph
+	 1,							// PARAM_IpwMs
+	 0,							// PARAM_IdcPct
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -139,6 +147,7 @@ static const PARAM s_aParamPoll[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
+	PARAM_IpwMs,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -156,6 +165,7 @@ static const PARAM s_aParamLog[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_Iam,
+	PARAM_IdcPct,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -1234,6 +1244,10 @@ bool CTactrix::FTryUpdatePolling()
 		ProcessParamValue(param, nValue);
 	}
 
+	// Update computed params
+
+	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
+
 	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
 
 	if (!FMustReceiveMessage(MSGK_ReplyEnd))
@@ -1321,8 +1335,12 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * 0.621371192f;
 		break;
 
+	case PARAM_IpwMs:
+		ng.m_g = float(nValue) * (256.0f / 1000.0f);
+		break;
+
 	default:
-		CASSERT(PARAM_SpeedMph == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_IdcPct == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
