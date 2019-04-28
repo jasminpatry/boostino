@@ -68,6 +68,7 @@ enum PARAM
 	PARAM_SpeedMph,
 	PARAM_IpwMs,
 	PARAM_IdcPct,		// NOTE (jasminp) calculated from PARAM_Rpm and PARAM_IpwMs
+	PARAM_Afr1,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -94,6 +95,7 @@ static const char * s_mpParamPChz[] =
 	"Vehicle Speed (mph)",								// PARAM_SpeedMph
 	"Fuel Injector #1 Pulse Width",						// PARAM_IpwMs
 	"Injector Duty Cycle",								// PARAM_IdcPct
+	"A/F Sensor #1",									// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -112,6 +114,7 @@ static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 	{ 0x00, 0x00, 0x10 },		// PARAM_SpeedMph
 	{ 0x00, 0x00, 0x20 },		// PARAM_IpwMs
 	{ 0x00, 0x00, 0x00 },		// PARAM_IdcPct
+	{ 0x00, 0x00, 0x46 },		// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -129,6 +132,7 @@ static const u8 s_mpParamCB[] =
 	 1,							// PARAM_SpeedMph
 	 1,							// PARAM_IpwMs
 	 0,							// PARAM_IdcPct
+	 1,							// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -147,7 +151,7 @@ static const PARAM s_aParamPoll[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
-	PARAM_IpwMs,
+	PARAM_Afr1,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -165,7 +169,7 @@ static const PARAM s_aParamLog[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_Iam,
-	PARAM_IdcPct,
+	PARAM_Afr1,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -1339,8 +1343,12 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * (256.0f / 1000.0f);
 		break;
 
+	case PARAM_Afr1:
+		ng.m_g = float(nValue) * (14.7f / 128.0f);
+		break;
+
 	default:
-		CASSERT(PARAM_IdcPct == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_Afr1 == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
