@@ -1039,7 +1039,12 @@ bool CTactrix::FTryStartPolling()
 			return false;
 		}
 
-		// J2534 header is at most 23 bytes for this request
+		// Equivalent to J2534 PassThruWriteMsgs; format is:
+		//		att<channel> <data size> <TxFlags> <timeout> <id>\r\n<data>
+		//	where data in this case is:
+		//		0x80, 0x10, 0xf0, <data size - 5>, 0xa8, <PP byte: 0x00 or 0x01>, <address list...>, <checksum>
+		//	PP byte is 0 if data should be sent once or 1 if it should be sent until interrupted.
+		//	J2534 header is at most 23 bytes for this request.
 
 		u8 aBReadRequest[s_cBSsmMax + 23];
 		int cBReadRequest = snprintf(
