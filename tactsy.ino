@@ -7,6 +7,7 @@
 #include <SD.h>
 #include <USBHost_t36.h>
 #include <Wire.h>
+#include <XPT2046_Touchscreen.h>
 
 #include "gaugeBg.h"
 #include "gaugeFg.h"
@@ -15,9 +16,10 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
+static const bool s_fTraceTouch = true;
 
 // Set to 1 to test without being plugged into the vehicle
 
@@ -58,12 +60,15 @@ enum PARAM
 	PARAM_FlkcDeg,
 	PARAM_BoostPsi,
 	PARAM_Iam,
-	PARAM_CoolantTempF,	// BB (jasminp) Currently unused
+	PARAM_CoolantTempF,	// BB (jpatry) Currently unused
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
+	PARAM_IpwMs,
+	PARAM_IdcPct,		// NOTE (jasminp) calculated from PARAM_Rpm and PARAM_IpwMs
+	PARAM_Afr1,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -78,16 +83,19 @@ PARAM & operator++(PARAM & param)
 
 static const char * s_mpParamPChz[] =
 {
-	"FBKC (deg)",				// PARAM_FbkcDeg
-	"FLKC (deg)",				// PARAM_FlkcDeg
-	"Boost (psi)",				// PARAM_BoostPsi
-	"Ignition Advance Mult.",	// PARAM_Iam
-	"Coolant Temp (F)",			// PARAM_CoolantTempF
-	"Load (g/rev)",				// PARAM_LoadGPerRev
-	"RPM",						// PARAM_Rpm
-	"Intake Air Temp (F)",		// PARAM_IatF
-	"Throttle (%)",				// PARAM_ThrottlePct
-	"Speed (MPH)",				// PARAM_SpeedMph
+	"Feedback Knock Correction (4-byte)* (degrees)",	// PARAM_FbkcDeg
+	"Fine Learning Knock Correction (degrees)",			// PARAM_FlkcDeg
+	"Manifold Relative Pressure (psi)",					// PARAM_BoostPsi
+	"IAM (multiplier)",									// PARAM_Iam
+	"Coolant Temperature (F)",							// PARAM_CoolantTempF
+	"Engine Load (Calculated) (g/rev)",					// PARAM_LoadGPerRev
+	"Engine Speed (rpm)",								// PARAM_Rpm
+	"Intake Air Temperature (F)",						// PARAM_IatF
+	"Throttle Opening Angle (%)",						// PARAM_ThrottlePct
+	"Vehicle Speed (mph)",								// PARAM_SpeedMph
+	"Fuel Injector #1 Pulse Width",						// PARAM_IpwMs
+	"Injector Duty Cycle",								// PARAM_IdcPct
+	"A/F Sensor #1",									// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -104,6 +112,9 @@ static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
 	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
 	{ 0x00, 0x00, 0x15 },		// PARAM_ThrottlePct
 	{ 0x00, 0x00, 0x10 },		// PARAM_SpeedMph
+	{ 0x00, 0x00, 0x20 },		// PARAM_IpwMs
+	{ 0x00, 0x00, 0x00 },		// PARAM_IdcPct
+	{ 0x00, 0x00, 0x46 },		// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -119,6 +130,9 @@ static const u8 s_mpParamCB[] =
 	 1,							// PARAM_IatF
 	 1,							// PARAM_ThrottlePct
 	 1,							// PARAM_SpeedMph
+	 1,							// PARAM_IpwMs
+	 0,							// PARAM_IdcPct
+	 1,							// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -137,6 +151,7 @@ static const PARAM s_aParamPoll[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
+	PARAM_Afr1,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -154,6 +169,7 @@ static const PARAM s_aParamLog[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_Iam,
+	PARAM_Afr1,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -291,7 +307,7 @@ inline void TraceHex(bool f, const u8 * aB, u16 cB)
 
 
 
-// BB (jasminp) Assigning __LINE__ to nAssertLine is necessary to get rid of warning about 'large integer implicitly
+// BB (jpatry) Assigning __LINE__ to nAssertLine is necessary to get rid of warning about 'large integer implicitly
 //	truncated to unsigned type'.
 
 #define ASSERT(f)								\
@@ -320,11 +336,11 @@ bool g_fUserialActive = false;
 
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
-static const u32 s_msTimeout = 2000;
+static const u32 s_dMsTimeoutDefault = 2000;
 
 
 
-// NOTE (jasminp) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
+// NOTE (jpatry) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
 //	https://github.com/NikolaKozina/j2534/blob/master/j2534.c . This fork (by one of the RomRaider devs) looks to be
 //	more up to date: https://github.com/dschultzca/j2534/blob/master/j2534.c
 
@@ -344,6 +360,13 @@ enum MSGK
 	MSGK_Min = 0,
 	MSGK_Nil = -1
 };
+
+// BB (jpatry) why doesn't this work? Compiler says "MSGK does not name a type".
+// MSGK & operator++(MSGK & msgk)
+// {
+// 	msgk = MSGK(msgk + 1);
+// 	return msgk;
+// }
 
 static const char * s_mpMsgkPChz[] =
 {
@@ -376,7 +399,7 @@ CASSERT(DIM(s_mpMsgkBType) == MSGK_Max);
 struct SJ2534Ar	// tag = ar
 {
 	u8	m_aBHeader[2];			// "ar"
-	u8	m_nProtocol;			// E.g. 3 for ISO9141
+	u8	m_nProtocol;			// E.g. '3' for ISO9141
 	u8	m_cBPlus1;				// length including m_bType
 	u8	m_bType;				// s_mpMsgkBType[msgk]
 	u8	m_aB[0];				// Payload
@@ -573,10 +596,10 @@ protected:
 	void			SendCommand(const u8 * aB, u16 cB);
 	void			SendCommand(const char * pChz);
 
-	int				CBReceive(u32 msTimeout);
+	int				CBReceive(u32 dMsTimeout);
 	void			ResetReceive();
-	bool			FTryReceiveMessage(const char * pChz);
-	bool			FMustReceiveMessage(const char * pChz);
+	bool			FTryReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FMustReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
 	int				CBMessage()
 						{ return m_iBRecv - m_iBRecvPrev; }
 	u8 *			PBMessage()
@@ -586,8 +609,11 @@ protected:
 	u8 *			PBRemaining()
 						{ return &m_aBRecv[m_iBRecv]; }
 
-	bool			FTryReceiveMessage(MSGK msgk);
-	bool			FMustReceiveMessage(MSGK msgk);
+	bool			FTryReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FMustReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
+	bool			FTrySkipMessage(u32 dMsTimeout = s_dMsTimeoutDefault);
+
+	bool			FTryIssueReadRequest();
 
 	void			FlushIncoming();
 
@@ -635,7 +661,7 @@ void CTactrix::SendCommand(const char * pChz)
 	SendCommand((const u8 *)pChz, strlen(pChz));
 }
 
-int CTactrix::CBReceive(u32 msTimeout)
+int CTactrix::CBReceive(u32 dMsTimeout)
 {
 	ResetReceive();
 
@@ -666,7 +692,7 @@ int CTactrix::CBReceive(u32 msTimeout)
 			return m_cBRecv;
 		}
 
-		if (msTimeout > 0 && millis() - msStart > msTimeout)
+		if (dMsTimeout > 0 && millis() - msStart > dMsTimeout)
 			return 0;
 
 		delayMicroseconds(100);
@@ -680,13 +706,13 @@ void CTactrix::ResetReceive()
 	m_iBRecvPrev = 0;
 }
 
-bool CTactrix::FTryReceiveMessage(const char * pChz)
+bool CTactrix::FTryReceiveMessage(const char * pChz, u32 dMsTimeout)
 {
 	int cCh = strlen(pChz);
 
 	if (CBRemaining() == 0)
 	{
-		if (CBReceive(s_msTimeout) == 0)
+		if (CBReceive(dMsTimeout) == 0)
 		{
 			Trace(true, "FTryReceiveMessage timed out waiting for reply \"");
 			for (int iCh = 0; iCh < cCh; ++iCh)
@@ -708,9 +734,9 @@ bool CTactrix::FTryReceiveMessage(const char * pChz)
 	return true;
 }
 
-bool CTactrix::FMustReceiveMessage(const char * pChz)
+bool CTactrix::FMustReceiveMessage(const char * pChz, u32 dMsTimeout)
 {
-	if (!FTryReceiveMessage(pChz))
+	if (!FTryReceiveMessage(pChz, dMsTimeout))
 	{
 		ResetReceive();
 
@@ -731,11 +757,11 @@ bool CTactrix::FMustReceiveMessage(const char * pChz)
 	return true;
 }
 
-bool CTactrix::FTryReceiveMessage(MSGK msgk)
+bool CTactrix::FTryReceiveMessage(MSGK msgk, u32 dMsTimeout)
 {
 	if (CBRemaining() == 0)
 	{
-		if (CBReceive(s_msTimeout) == 0)
+		if (CBReceive(dMsTimeout) == 0)
 		{
 			Trace(true, "Timed out waiting for message type ");
 			Trace(true, s_mpMsgkPChz[msgk]);
@@ -814,9 +840,9 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk)
 	return true;
 }
 
-bool CTactrix::FMustReceiveMessage(MSGK msgk)
+bool CTactrix::FMustReceiveMessage(MSGK msgk, u32 dMsTimeout)
 {
-	if (!FTryReceiveMessage(msgk))
+	if (!FTryReceiveMessage(msgk, dMsTimeout))
 	{
 		ResetReceive();
 
@@ -828,6 +854,30 @@ bool CTactrix::FMustReceiveMessage(MSGK msgk)
 	}
 
 	return true;
+}
+
+bool CTactrix::FTrySkipMessage(u32 dMsTimeout)
+{
+	if (CBRemaining() == 0)
+	{
+		if (dMsTimeout == 0)
+		{
+			return false;
+		}
+		else if (CBReceive(dMsTimeout) == 0)
+		{
+			Trace(true, "Timed out trying to skip message\n");
+			return false;
+		}
+	}
+
+	for (MSGK msgk = MSGK_Min; msgk < MSGK_Max; msgk = MSGK(msgk + 1))
+	{
+		if (FTryReceiveMessage(msgk, 0))
+			return true;
+	}
+
+	return false;
 }
 
 void CTactrix::FlushIncoming()
@@ -928,7 +978,7 @@ bool CTactrix::FTryConnect()
 	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
 	//	Parameter ID = PARITY (0x16 or 22) -- default is NO_PARITY (0)
 	//	Value = NO_PARITY (0)
-	// BB (jasminp) Redundant?
+	// BB (jpatry) Redundant?
 
 	SendCommand("ats3 22 0 9\r\n");
 	if (!FMustReceiveMessage("aro 9\r\n"))
@@ -1015,7 +1065,7 @@ bool CTactrix::FTryStartPolling()
 			}
 		}
 
-		// BB (jasminp) Validate SSM reply?
+		// BB (jpatry) Validate SSM reply?
 
 		Trace(true, "SSM Init Reply: ");
 		TraceHex(true, aBSsmInitReply, cBSsmInitReply);
@@ -1023,6 +1073,11 @@ bool CTactrix::FTryStartPolling()
 	}
 #endif // TEST_OFFLINE
 
+	return FTryIssueReadRequest();
+}
+
+bool CTactrix::FTryIssueReadRequest()
+{
 	{
 		// Issue address read request (A8)
 
@@ -1124,21 +1179,12 @@ bool CTactrix::FTryUpdatePolling()
 
 	u32 msCur = millis();
 
-	static const int s_dMsPollingRestart = 10 * 1000;
-	if (msCur - m_msPollingStart > s_dMsPollingRestart)
-	{
-		Trace(true, "Restart polling...\n");
-		m_tactrixs = TACTRIXS_Connected;
-		FlushIncoming();
-		if (!FTryStartPolling())
-			return false;
-	}
-
 #if !TEST_OFFLINE
 	bool fReceivedReply = false;
 	for (int i = 0; i < 10; ++i)
 	{
-		if (FTryReceiveMessage(MSGK_ReplyStart))
+		static const int s_dMsReplyStartTimeout = 300;
+		if (FTryReceiveMessage(MSGK_ReplyStart, s_dMsReplyStartTimeout))
 		{
 			if (FMustReceiveMessage(MSGK_Reply))
 			{
@@ -1160,7 +1206,18 @@ bool CTactrix::FTryUpdatePolling()
 			if (m_cBRecv == 0)
 			{
 				Trace(true, "Timed out while waiting to receive AddressReadResponse message\n");
-				return false;
+
+				// Try to re-issue request
+
+				if (!FTryIssueReadRequest())
+					return false;
+			}
+			else
+			{
+				// Try to skip message
+
+				if (!FTrySkipMessage(0))
+					ResetReceive();	// last resort
 			}
 		}
 	}
@@ -1196,6 +1253,10 @@ bool CTactrix::FTryUpdatePolling()
 		ProcessParamValue(param, nValue);
 	}
 
+	// Update computed params
+
+	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
+
 	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
 
 	if (!FMustReceiveMessage(MSGK_ReplyEnd))
@@ -1207,7 +1268,7 @@ bool CTactrix::FTryUpdatePolling()
 	float gBoost = -10.0f + 30.0f * (-sinf(msCur / 1000.0f) * 0.5f + 0.5f);
 	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
 
-	float uIam = 1.0f;
+	float uIam = ((msCur & 0x1fff) - 0x1e0 < 0x100) ? 0.93f : 1.0f;
 	m_mpParamGValue[PARAM_Iam] = uIam;
 
 	float degFbkc = ((msCur & 0x1fff) < 0x100) ? -1.4f : 0.0f;
@@ -1283,8 +1344,16 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * 0.621371192f;
 		break;
 
+	case PARAM_IpwMs:
+		ng.m_g = float(nValue) * (256.0f / 1000.0f);
+		break;
+
+	case PARAM_Afr1:
+		ng.m_g = float(nValue) * (14.7f / 128.0f);
+		break;
+
 	default:
-		CASSERT(PARAM_SpeedMph == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_Afr1 == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
@@ -1323,6 +1392,25 @@ CTactrix g_tactrix;
 
 
 
+// Touchscreen Configuration
+
+static const int s_nPinTouchCs = 8;
+static const int s_nPinTouchIrq = 2;
+
+// Calibration data for the raw touch data to the screen coordinates
+
+static const int s_xTsMin = 180;
+static const int s_yTsMin = 250;
+static const int s_xTsMax = 3700;
+static const int s_yTsMax = 3800;
+
+XPT2046_Touchscreen g_ts = XPT2046_Touchscreen(s_nPinTouchCs, s_nPinTouchIrq);
+bool g_fTouch = false;
+u16 g_xTouch;
+u16 g_yTouch;
+
+
+
 // TFT Display Configuration
 
 static const int s_dXScreen = 320;
@@ -1337,19 +1425,35 @@ GFXcanvas8 * g_pCnvs = &g_aCnvs[0];
 GFXcanvas8 * g_pCnvsPrev = &g_aCnvs[1];
 uint16_t g_aColorPalette[64];
 
-static const uint8_t s_iColorWhite = 0x1F;
+static const uint8_t s_iColorBlack = 0;
+
+static const uint8_t s_iColorWhiteMic = 0;
+
+static const uint8_t s_iColorWhite = 31;
 CASSERT(s_iColorWhite == DIM(g_aColorPalette) / 2 - 1);
 
-static const uint8_t s_iColorGrey = 0x10;
+static const uint8_t s_iColorGrey = 16;
 
-static const uint8_t s_iColorRed = 0x3F;
+static const uint8_t s_iColorRedMic = 32;
+CASSERT(s_iColorRedMic == DIM(g_aColorPalette) / 2);
+
+static const uint8_t s_iColorRed = 63;
 CASSERT(s_iColorRed == DIM(g_aColorPalette) - 1);
+
+static const uint8_t s_iColorIamAlert = 55;
 
 
 
 void UpdateTft()
 {
-	g_tft.updateRect8BPP(0, 0, s_dXScreen, s_dYScreen, g_pCnvs->getBuffer(), g_pCnvsPrev->getBuffer(), g_aColorPalette);
+	g_tft.updateRect8BPP(
+			0,
+			0,
+			s_dXScreen,
+			s_dYScreen,
+			g_pCnvs->getBuffer(),
+			g_pCnvsPrev->getBuffer(),
+			g_aColorPalette);
 }
 
 
@@ -1425,7 +1529,7 @@ void DrawSplashScreen()
 
 void DisplayStatus(const char * pChz)
 {
-	g_pCnvs->fillScreen(0);
+	g_pCnvs->fillScreen(s_iColorBlack);
 	g_pCnvs->setCursor(10, 50);
 	g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
 	g_pCnvs->setTextColor(s_iColorWhite);
@@ -1437,11 +1541,88 @@ void DisplayStatus(const char * pChz)
 // SD Card Configuration
 
 static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
-static const char * s_pChzLogPrefix = "knock";
-static const char * s_pChzLogSuffix = ".log";
+static const char * s_pChzLogPrefix = "log";
+static const char * s_pChzLogSuffix = ".csv";
 static const int s_cLogFileMax = 1000;
-static int s_nLogSuffix = -1;
+static int s_nLogSuffix = 0;
 static File s_fileLog;
+
+
+
+void UpdateLog()
+{
+	if (!s_fileLog)
+	{
+		// Open the log file
+
+		char aChzPath[32];
+		snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, s_nLogSuffix, s_pChzLogSuffix);
+
+		bool fWriteHeader = !SD.exists(aChzPath);
+		s_fileLog = SD.open(aChzPath, FILE_WRITE | O_APPEND);
+
+		if (s_fileLog)
+		{
+			Trace(true, "Opened file '");
+			Trace(true, aChzPath);
+			Trace(true, "' for append.\n");
+
+			if (fWriteHeader)
+			{
+				// Write the header
+
+				s_fileLog.print("Time (msec),");
+				for (int iParamLog = 0;;)
+				{
+					s_fileLog.print(s_mpParamPChz[s_aParamLog[iParamLog]]);
+
+					if (++iParamLog >= s_cParamLog)
+						break;
+
+					s_fileLog.print(",");
+				}
+
+				s_fileLog.println();
+			}
+		}
+		else
+		{
+			// Don't try to open again
+
+			s_nLogSuffix = 0;
+
+			Serial.print("Failed to open file '");
+			Serial.print(aChzPath);
+			Serial.print("' for writing. Is SD card full?\n");
+
+			return;
+		}
+	}
+
+	// Write the log history
+
+	while (!g_loghist.FIsEmpty())
+	{
+		const SLogEntry & logent = g_loghist.LogentRead();
+
+		s_fileLog.print(logent.m_msTimestamp);
+
+		s_fileLog.print(",");
+
+		CASSERT(s_cParamLog > 0);
+		for (int iParamLog = 0;;)
+		{
+			s_fileLog.print(logent.m_mpIParamLogGValue[iParamLog], 3);
+
+			if (++iParamLog >= s_cParamLog)
+				break;
+
+			s_fileLog.print(",");
+		}
+
+		s_fileLog.println();
+	}
+}
 
 
 
@@ -1481,11 +1662,16 @@ void setup()
 	{
 		g_aCnvs[iCnvs].setTextColor(s_iColorWhite);
 		g_aCnvs[iCnvs].setRotation(0);
-		g_aCnvs[iCnvs].fillScreen(0x0);
+		g_aCnvs[iCnvs].fillScreen(s_iColorBlack);
 	}
 
 	DrawSplashScreen();
 	UpdateTft();
+
+	if (g_ts.begin())
+		g_ts.setRotation(3);
+	else
+		Serial.println("Couldn't start touchscreen controller");
 
 	// Initialize SD Card
 
@@ -1493,8 +1679,7 @@ void setup()
 	{
 		// Determine log file index
 
-		int iSuffix;
-		for (iSuffix = 0; iSuffix < s_cLogFileMax; ++iSuffix)
+		for (int iSuffix = 1; iSuffix < s_cLogFileMax; ++iSuffix)
 		{
 			char aChzPath[32];
 			snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, iSuffix, s_pChzLogSuffix);
@@ -1532,6 +1717,44 @@ void loop()
 
 	if (msCur <= s_msSplashMax)
 		DrawSplashScreen();
+
+	// Detect touchscreen events
+
+	bool fTouch = false;
+	if (!g_ts.bufferEmpty())
+	{
+		TS_Point posTouch = g_ts.getPoint();
+		static const int s_zTouchMin = 500;
+		if (posTouch.z >= s_zTouchMin)
+		{
+			fTouch = true;
+
+			Trace(s_fTraceTouch, "Touch point: ");
+			Trace(s_fTraceTouch, posTouch.x);
+			Trace(s_fTraceTouch, " ");
+			Trace(s_fTraceTouch, posTouch.y);
+			Trace(s_fTraceTouch, " ");
+			Trace(s_fTraceTouch, posTouch.z);
+			Trace(s_fTraceTouch, "\n");
+
+			g_xTouch = map(posTouch.x, s_xTsMin, s_xTsMax, 0, s_dXScreen);
+			g_yTouch = map(posTouch.y, s_yTsMin, s_yTsMax, 0, s_dYScreen);
+			g_fTouch = true;
+		}
+	}
+
+	bool fTouchRelease = false;
+	if (!fTouch && g_fTouch)
+	{
+		g_fTouch = false;
+		fTouchRelease = true;
+
+		Trace(true, "Touch release: ");
+		Trace(true, g_xTouch);
+		Trace(true, " ");
+		Trace(true, g_yTouch);
+		Trace(true, "\n");
+	}
 
 	if (g_userial != g_fUserialActive)
 	{
@@ -1575,7 +1798,7 @@ void loop()
 		if (!g_tactrix.FTryConnect())
 		{
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 
@@ -1587,7 +1810,7 @@ void loop()
 		if (!g_tactrix.FTryStartPolling())
 		{
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 
@@ -1595,11 +1818,17 @@ void loop()
 	{
 		if (g_tactrix.FTryUpdatePolling())
 		{
-			g_pCnvs->fillScreen(0x0);
+			// Update data, handle touch events, draw gauge and log if necessary
 
-			// &&& clean this up
+			g_pCnvs->fillScreen(s_iColorBlack);
 
 			static float s_gBoostMax = -1000.0f;
+
+			// Check for max boost reset event
+
+			if (fTouchRelease && g_xTouch >= 245 && g_yTouch >= 195)
+				s_gBoostMax = -1000.0f;
+
 			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
 
@@ -1608,6 +1837,14 @@ void loop()
 			static u32 s_msFbkcEventLast = 0;
 			static int s_cFbkcEvent = 0;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
+
+			// Check for min FBKC reset event
+
+			if (fTouchRelease && g_xTouch >= 240 && g_yTouch <= 55)
+			{
+				s_degFbkcMin = 1000.0f;
+				s_cFbkcEvent = 0;
+			}
 
 			// Check if we have a new FBKC event
 
@@ -1626,37 +1863,56 @@ void loop()
 			if (degFlkc < 0.0f)
 				s_msFlkcEventLast = msCur;
 
-			// &&& Do something for IAM
 			static float s_uIamMin = 1.0f;
+
+			static const float s_sRadiusIamCircle = 32;
+			static const int s_xBoostCenter = 160;
+			static const int s_yBoostCenter = 131;
+
+			// Check for min IAM reset event
+
+			if (fTouchRelease)
+			{
+				int dXTouch = g_xTouch - s_xBoostCenter;
+				int dYTouch = g_yTouch - s_yBoostCenter;
+				if (dXTouch * dXTouch + dYTouch * dYTouch < s_sRadiusIamCircle * s_sRadiusIamCircle)
+					s_uIamMin = 1.0f;
+			}
+
 			float uIam = g_tactrix.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
-			bool fWriteToLog = false;
-			if (s_uIamMin < 1.0f)
-			{
-				fWriteToLog = true;
-			}
+			// Check if doing a WOT pull
 
-			if (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent)
-			{
-				fWriteToLog = true;
-			}
+			static const int s_cWotThreshold = 20;
+			CASSERT(s_cWotThreshold < s_cEntryLogHistory);
 
-			if (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)
-			{
-				fWriteToLog = true;
-			}
+			static int s_cWot = 0;
+			float gThrottlePct = g_tactrix.GParam(PARAM_ThrottlePct);
+			if (gThrottlePct > 95.0f)
+				++s_cWot;
+			else
+				s_cWot = 0;
+
+			// Write to log if WOT for long enough, or if min IAM < 1 or a knock event happened recently
+
+			bool fWriteToLog = (s_nLogSuffix &&
+								(s_cWot >= s_cWotThreshold ||
+								 s_uIamMin < 1.0f ||
+								 (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
+								 (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)));
 
 			g_pCnvs->setT3Font(&Exo_28_Bold_Italic);
-			g_tft.setFont(Exo_28_Bold_Italic); // &&&
+
+			// Boost gauge
+			// NOTE (jpatry) Angles measured CCW from +X axis (3 o'clock).
+			//	Boost of 0 = 12 o'clock; -15 = 9 o'clock; +15 = 3 o'clock.
 
 			float radBoost = (6.0f * gBoost + 90.0f) * s_gPi / 180.0f;
 			float radBoostMax = (6.0f * s_gBoostMax + 90.0f) * s_gPi / 180.0f;
 			float gSinBoost = sinf(radBoost);
 			float gCosBoost = cosf(radBoost);
 			float gCotanBoost = gCosBoost / gSinBoost;
-			static const int s_xBoostCenter = 160;
-			static const int s_yBoostCenter = 131;
 			static const int s_sNeedle = 113;
 
 			{
@@ -1740,8 +1996,7 @@ void loop()
 				char chDec = aChz[cCh - 1];
 				aChz[cCh - 1] = '\0';
 
-				// &&& copy strPixelLen to adafruit_gfx
-				g_pCnvs->setCursor(138 - g_tft.strPixelLen(aChz), 175);
+				g_pCnvs->setCursor(138 - g_pCnvs->strPixelLen(aChz), 175);
 				aChz[cCh - 1] = chDec;
 				g_pCnvs->print(aChz);
 
@@ -1757,19 +2012,18 @@ void loop()
 
 				float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
-				g_pCnvs->setCursor(65 - g_tft.strPixelLen(aChz), 10);
+				g_pCnvs->setCursor(65 - g_pCnvs->strPixelLen(aChz), 10);
 				g_pCnvs->print(aChz);
 			}
 
 			g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
-			g_tft.setFont(Exo_16_Bold_Italic); // &&&
 
 			{
 				// Draw IAT
 
 				float gIatF = g_tactrix.GParam(PARAM_IatF);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gIatF)));
-				g_pCnvs->setCursor(51 - g_tft.strPixelLen(aChz), 214);
+				g_pCnvs->setCursor(51 - g_pCnvs->strPixelLen(aChz), 214);
 				g_pCnvs->print(aChz);
 			}
 
@@ -1784,120 +2038,78 @@ void loop()
 			{
 				snprintf(aChz, DIM(aChz), "%.2f", s_degFbkcMin);
 			}
-			g_pCnvs->setCursor(301 - g_tft.strPixelLen(aChz), 26);
+			g_pCnvs->setCursor(301 - g_pCnvs->strPixelLen(aChz), 26);
 			g_pCnvs->print(aChz);
 
 			// Draw FBKC count
 
 			snprintf(aChz, DIM(aChz), "%d", s_cFbkcEvent);
-			g_pCnvs->setCursor(297 - g_tft.strPixelLen(aChz), 48);
+			g_pCnvs->setCursor(297 - g_pCnvs->strPixelLen(aChz), 48);
 			g_pCnvs->print(aChz);
 			g_pCnvs->setTextColor(s_iColorWhite);
 
 			// Draw max boost
 
 			snprintf(aChz, DIM(aChz), "%.1f", s_gBoostMax);
-			g_pCnvs->setCursor(284 - g_tft.strPixelLen(aChz), 214);
+			g_pCnvs->setCursor(284 - g_pCnvs->strPixelLen(aChz), 214);
 			g_pCnvs->print(aChz);
 
-			g_pCnvs->drawLine(
+			// Draw gauge hands
+
+			g_pCnvs->writeLineAntialiased(
 						s_xBoostCenter,
 						s_yBoostCenter,
-						s_xBoostCenter - s_sNeedle * cos(radBoostMax),
-						s_yBoostCenter - s_sNeedle * sin(radBoostMax),
+						s_xBoostCenter - s_sNeedle * cosf(radBoostMax),
+						s_yBoostCenter - s_sNeedle * sinf(radBoostMax),
+						s_iColorRedMic,
 						s_iColorRed);
 
-			g_pCnvs->drawLine(
+			g_pCnvs->writeLineAntialiased(
 						s_xBoostCenter,
 						s_yBoostCenter,
 						s_xBoostCenter - s_sNeedle * gCosBoost,
 						s_yBoostCenter - s_sNeedle * gSinBoost,
+						s_iColorWhiteMic,
 						s_iColorWhite);
 
-#if !TEST_OFFLINE
-			// Log if we displayed a warning
+			// IAM
 
+			if (s_uIamMin < 1.0f)
+			{
+				g_pCnvs->fillCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle,
+							s_iColorIamAlert);
+				g_pCnvs->drawCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle,
+							s_iColorBlack);
+				g_pCnvs->drawCircle(
+							s_xBoostCenter,
+							s_yBoostCenter,
+							s_sRadiusIamCircle + 1,
+							s_iColorBlack);
+				g_pCnvs->setTextColor(s_iColorBlack);
+				const char * pChz = "IAM";
+				g_pCnvs->setCursor(s_xBoostCenter - g_pCnvs->strPixelLen(pChz) / 2, s_yBoostCenter - 18);
+				g_pCnvs->print(pChz);
+				snprintf(aChz, DIM(aChz), "%0.2f", s_uIamMin);
+				g_pCnvs->setCursor(s_xBoostCenter - g_pCnvs->strPixelLen(aChz) / 2, s_yBoostCenter + 2);
+				g_pCnvs->print(aChz);
+				g_pCnvs->setTextColor(s_iColorWhite);
+			}
+
+#if !TEST_OFFLINE
 			if (fWriteToLog)
 			{
-				if (!s_fileLog && s_nLogSuffix >= 0)
-				{
-					// Open the log file
-
-					char aChzPath[32];
-					snprintf(aChzPath, DIM(aChzPath), "%s%d%s", s_pChzLogPrefix, s_nLogSuffix, s_pChzLogSuffix);
-					s_fileLog = SD.open(aChzPath, FILE_WRITE);
-					if (s_fileLog)
-					{
-						Trace(true, "Opened file '");
-						Trace(true, aChzPath);
-						Trace(true, "' for writing.\n");
-
-						// Write the header
-
-						s_fileLog.print("time,");
-						for (int iParamLog = 0;;)
-						{
-							s_fileLog.print(s_mpParamPChz[s_aParamLog[iParamLog]]);
-
-							if (++iParamLog >= s_cParamLog)
-								break;
-
-							s_fileLog.print(",");
-						}
-
-						s_fileLog.println();
-					}
-					else
-					{
-						// Don't try to open again
-
-						s_nLogSuffix = -1;
-
-						Serial.print("Failed to open file '");
-						Serial.print(aChzPath);
-						Serial.print("' for writing. Is SD card full?\n");
-					}
-				}
-
-				if (s_fileLog)
-				{
-					// Write the log history
-
-					while (!g_loghist.FIsEmpty())
-					{
-						const SLogEntry & logent = g_loghist.LogentRead();
-
-						s_fileLog.print(logent.m_msTimestamp / 1000.0f, 3);
-
-						s_fileLog.print(",");
-
-						CASSERT(s_cParamLog > 0);
-						for (int iParamLog = 0;;)
-						{
-							s_fileLog.print(logent.m_mpIParamLogGValue[iParamLog], 3);
-
-							if (++iParamLog >= s_cParamLog)
-								break;
-
-							s_fileLog.print(",");
-						}
-
-						s_fileLog.println();
-					}
-				}
+				UpdateLog();
 			}
-
-			static bool s_fWriteToLogPrev = false;
-			if (!fWriteToLog && s_fWriteToLogPrev && s_fileLog)
+			else if (s_fileLog)
 			{
-				// Flush to SD card
-
-				s_fileLog.flush();
-
-				Trace(true, "Flushed file.\n");
+				s_fileLog.close();
 			}
-
-			s_fWriteToLogPrev = fWriteToLog;
 #endif // !TEST_OFFLINE
 		}
 		else
@@ -1906,7 +2118,7 @@ void loop()
 				DisplayStatus("Polling Error");
 
 			g_tactrix.Disconnect();
-			delay(s_msTimeout);
+			delay(s_dMsTimeoutDefault);
 		}
 	}
 	else
