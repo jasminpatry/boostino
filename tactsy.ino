@@ -67,7 +67,7 @@ enum PARAM
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
 	PARAM_IpwMs,
-	PARAM_IdcPct,		// NOTE (jasminp) calculated from PARAM_Rpm and PARAM_IpwMs
+	PARAM_IdcPct,		// NOTE (jpatry) calculated from PARAM_Rpm and PARAM_IpwMs
 	PARAM_Afr1,
 
 	PARAM_Max,
@@ -100,21 +100,21 @@ static const char * s_mpParamPChz[] =
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
 static const u8 s_cBSsmAddr = 3;
-static const u8 s_mpParamABAddr[][s_cBSsmAddr] =
+static const u32 s_mpParamABAddr[s_cBSsmAddr] =
 {
-	{ 0xff, 0x81, 0xfc },		// PARAM_FbkcDeg
-	{ 0x00, 0x01, 0x99 },		// PARAM_FlkcDeg
-	{ 0x00, 0x00, 0x24 },		// PARAM_BoostPsi
-	{ 0x00, 0x00, 0xf9 },		// PARAM_Iam
-	{ 0x00, 0x00, 0x08 },		// PARAM_CoolantTempF
-	{ 0xff, 0x64, 0x10 },		// PARAM_LoadGPerRev
-	{ 0x00, 0x00, 0x0e },		// PARAM_Rpm
-	{ 0x00, 0x00, 0x12 },		// PARAM_IatF
-	{ 0x00, 0x00, 0x15 },		// PARAM_ThrottlePct
-	{ 0x00, 0x00, 0x10 },		// PARAM_SpeedMph
-	{ 0x00, 0x00, 0x20 },		// PARAM_IpwMs
-	{ 0x00, 0x00, 0x00 },		// PARAM_IdcPct
-	{ 0x00, 0x00, 0x46 },		// PARAM_Afr1
+	0xff81fc,		// PARAM_FbkcDeg
+	0x000199,		// PARAM_FlkcDeg
+	0x000024,		// PARAM_BoostPsi
+	0x0000f9,		// PARAM_Iam
+	0x000008,		// PARAM_CoolantTempF
+	0xff6410,		// PARAM_LoadGPerRev
+	0x00000e,		// PARAM_Rpm
+	0x000012,		// PARAM_IatF
+	0x000015,		// PARAM_ThrottlePct
+	0x000010,		// PARAM_SpeedMph
+	0x000020,		// PARAM_IpwMs
+	0x000000,		// PARAM_IdcPct
+	0x000046,		// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -135,6 +135,28 @@ static const u8 s_mpParamCB[] =
 	 1,							// PARAM_Afr1
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
+
+// { 0xff31d4, 4, "A/F Learning #1 A (Stored)*" }, // float, x*100, %
+// { 0xff31dc, 4, "A/F Learning #1 B (Stored)*" }, // float, x*100, %
+// { 0xff31e4, 4, "A/F Learning #1 C (Stored)*" }, // float, x*100, %
+// { 0xff31ec, 4, "A/F Learning #1 D (Stored)*" }, // float, x*100, %
+// { 0x0000d1, 1, "A/F Learning #3" }, // u8, (x-128)*100/128, %
+// { 0x000023, 1, "Atmospheric Pressure" }, //u8,  x*37/255, psi
+// { 0x00001c, 1, "Battery Voltage" }, // u8, x*8/100, V
+// // { 0x000008, 1, "Coolant Temperature" }, // u8, 32+9*(x-40)/5, F
+// { 0xff8298, 4, "Fine Learning Knock Correction (4-byte)*" }, // float, x, degrees
+// { 0xff329c, 4, "IAM (4-byte)*" }, // float, x, multiplier
+// // { 0x000012, 1, "Intake Air Temperature" }, // u8, 32+9*(x-40)/5, F
+// { 0x0cce3c, 4, "A/F Learning #1 Airflow Ranges", 3 }, // float, x, g/s
+// { 0x0d3dd8, 4 ,"Fine Correction Columns (Load)", 4 }, // float, x, g/rev
+// { 0x0d3dbc, 4 ,"Fine Correction Rows (RPM)", 6 }, // float, x, RPM
+// { 0xff32b0, 4 ,"Fine Correction Row 1 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM // NOTE (jpatry) Address is IAM (4-byte) + 4
+// { 0xff32d8, 4 ,"Fine Correction Row 2 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
+// { 0xff3300, 4 ,"Fine Correction Row 3 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
+// { 0xff3328, 4 ,"Fine Correction Row 4 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
+// { 0xff3350, 4 ,"Fine Correction Row 5 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
+// { 0xff3378, 4 ,"Fine Correction Row 6 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
+// { 0xff33a0, 4 ,"Fine Correction Row 7 (degrees)", 5, 4 /*stride*/ }, // float, x, RPM
 
 
 
@@ -1078,93 +1100,89 @@ bool CTactrix::FTryStartPolling()
 
 bool CTactrix::FTryIssueReadRequest()
 {
+	// Issue address read request (A8)
+
+	m_cBParamPoll = 0;
+	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
+		m_cBParamPoll += s_mpParamCB[s_aParamPoll[iParamPoll]];
+
+	int cBSsmRead = 7; // header + checksum + PP byte (single response/respond until interrupted)
+	cBSsmRead += s_cBSsmAddr * m_cBParamPoll;
+
+	if (cBSsmRead > s_cBSsmMax)
 	{
-		// Issue address read request (A8)
+		Trace(true, "SSM packet overflow (trying to read too many params)\n");
+		return false;
+	}
 
-		m_cBParamPoll = 0;
-		for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
-			m_cBParamPoll += s_mpParamCB[s_aParamPoll[iParamPoll]];
+	// Equivalent to J2534 PassThruWriteMsgs; format is:
+	//		att<channel> <data size> <TxFlags> <timeout> <id>\r\n<data>
+	//	where data in this case is:
+	//		0x80, 0x10, 0xf0, <data size - 5>, 0xa8, <PP byte: 0x00 or 0x01>, <address list...>, <checksum>
+	//	PP byte is 0 if data should be sent once or 1 if it should be sent until interrupted.
+	//	J2534 header is at most 23 bytes for this request.
 
-		int cBSsmRead = 7; // header + checksum + PP byte (single response/respond until interrupted)
-		cBSsmRead += s_cBSsmAddr * m_cBParamPoll;
+	u8 aBReadRequest[s_cBSsmMax + 23];
+	int cBReadRequest = snprintf(
+							(char *)aBReadRequest,
+							DIM(aBReadRequest),
+							"att3 %d 0 2000000 12\r\n\x80\x10\xf0%c\xa8\x01",
+							cBSsmRead,
+							cBSsmRead - 5);
+	int iSsmStart = cBReadRequest - 6;
+	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
+	{
+		PARAM param = s_aParamPoll[iParamPoll];
+		u32 nAddr = s_mpParamABAddr[param];
 
-		if (cBSsmRead > s_cBSsmMax)
+		for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
 		{
-			Trace(true, "SSM packet overflow (trying to read too many params)\n");
-			return false;
+			aBReadRequest[cBReadRequest + 0] = (nAddr & 0xff0000) >> 16;
+			aBReadRequest[cBReadRequest + 1] = (nAddr & 0x00ff00) >> 8;
+			aBReadRequest[cBReadRequest + 2] = (nAddr & 0x0000ff);
+			CASSERT(s_cBSsmAddr == 3);
+			cBReadRequest += s_cBSsmAddr;
+			nAddr += 1;
 		}
+	}
 
-		// Equivalent to J2534 PassThruWriteMsgs; format is:
-		//		att<channel> <data size> <TxFlags> <timeout> <id>\r\n<data>
-		//	where data in this case is:
-		//		0x80, 0x10, 0xf0, <data size - 5>, 0xa8, <PP byte: 0x00 or 0x01>, <address list...>, <checksum>
-		//	PP byte is 0 if data should be sent once or 1 if it should be sent until interrupted.
-		//	J2534 header is at most 23 bytes for this request.
+	aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
+	++cBReadRequest;
 
-		u8 aBReadRequest[s_cBSsmMax + 23];
-		int cBReadRequest = snprintf(
-								(char *)aBReadRequest,
-								DIM(aBReadRequest),
-								"att3 %d 0 2000000 12\r\n\x80\x10\xf0%c\xa8\x01",
-								cBSsmRead,
-								cBSsmRead - 5);
-		int iSsmStart = cBReadRequest - 6;
-		for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
-		{
-			PARAM param = s_aParamPoll[iParamPoll];
-			u32 nAddr =
-				s_mpParamABAddr[param][0] << 16 |
-				s_mpParamABAddr[param][1] << 8 |
-				s_mpParamABAddr[param][2];
+	ASSERT(cBReadRequest - iSsmStart == cBSsmRead);
 
-			for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
-			{
-				aBReadRequest[cBReadRequest + 0] = (nAddr & 0xff0000) >> 16;
-				aBReadRequest[cBReadRequest + 1] = (nAddr & 0x00ff00) >> 8;
-				aBReadRequest[cBReadRequest + 2] = (nAddr & 0x0000ff);
-				CASSERT(s_cBSsmAddr == 3);
-				cBReadRequest += s_cBSsmAddr;
-				nAddr += 1;
-			}
-		}
-
-		aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
-		++cBReadRequest;
-
-		ASSERT(cBReadRequest - iSsmStart == cBSsmRead);
-
-		SendCommand(aBReadRequest, cBReadRequest);
+	SendCommand(aBReadRequest, cBReadRequest);
 
 #if !TEST_OFFLINE
-		int iBLoopback = iSsmStart;
 
-		while (iBLoopback < cBReadRequest)
+	int iBLoopback = iSsmStart;
+
+	while (iBLoopback < cBReadRequest)
+	{
+		if (!FMustReceiveMessage(MSGK_LoopbackStart))
+			return false;
+
+		if (!FMustReceiveMessage(MSGK_Loopback))
+			return false;
+
+		const SJ2534Ar * pArLoopback = (const SJ2534Ar *)PBMessage();
+		int cBLoopbackFrag = pArLoopback->CBPayload();
+		if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
+			memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
 		{
-			if (!FMustReceiveMessage(MSGK_LoopbackStart))
-				return false;
-
-			if (!FMustReceiveMessage(MSGK_Loopback))
-				return false;
-
-			const SJ2534Ar * pArLoopback = (const SJ2534Ar *)PBMessage();
-			int cBLoopbackFrag = pArLoopback->CBPayload();
-			if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
-				memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
-			{
-				Trace(true, "Loopback error\n");
-				return false;
-			}
-
-			iBLoopback += cBLoopbackFrag;
-
-			if (!FMustReceiveMessage(MSGK_LoopbackEnd))
-				return false;
+			Trace(true, "Loopback error\n");
+			return false;
 		}
-#endif // !TEST_OFFLINE
 
-		if (!FMustReceiveMessage("aro 12\r\n"))
+		iBLoopback += cBLoopbackFrag;
+
+		if (!FMustReceiveMessage(MSGK_LoopbackEnd))
 			return false;
 	}
+#endif // !TEST_OFFLINE
+
+	if (!FMustReceiveMessage("aro 12\r\n"))
+		return false;
 
 	m_tactrixs = TACTRIXS_Polling;
 	m_msPollingStart = millis();
@@ -1231,6 +1249,8 @@ bool CTactrix::FTryUpdatePolling()
 	const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
 	const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
 	const u8 * pBData = pSsm->PBData();
+
+	// &&& Need to handle replies split over multiple messages
 
 	if (pSsm->CBData() != m_cBParamPoll)
 	{
