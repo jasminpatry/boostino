@@ -1466,6 +1466,35 @@ static const uint8_t s_iColorIamAlert = 55;
 
 void UpdateTft()
 {
+	// Always fully write one scan line each frame in case of hardware issues that corrupt the display.
+
+	static int s_iYLineUpdate = 0;
+
+	int dBLine = s_iYLineUpdate * s_dXScreen;
+
+	g_tft.writeRect8BPP(
+			0,
+			s_iYLineUpdate,
+			s_dXScreen,
+			1,
+			g_pCnvs->getBuffer() + dBLine,
+			g_aColorPalette);
+
+	// Update previous buffer so we don't write that line again
+
+	memcpy(
+		g_pCnvsPrev->getBuffer() + dBLine,
+		g_pCnvs->getBuffer() + dBLine,
+		s_dXScreen);
+
+	// Wrap around
+
+	s_iYLineUpdate += 1;
+	if (s_iYLineUpdate >= s_dYScreen)
+		s_iYLineUpdate = 0;
+
+	// Incremental update of the rest
+
 	g_tft.updateRect8BPP(
 			0,
 			0,
@@ -1550,7 +1579,12 @@ void DrawSplashScreen()
 void DisplayStatus(const char * pChz)
 {
 	g_pCnvs->fillScreen(s_iColorBlack);
-	g_pCnvs->setCursor(10, 50);
+
+	// Move down a line each update so that we can tell it's alive
+
+	static u32 s_diYCursor = 0;
+	g_pCnvs->setCursor(10, 38 + (++s_diYCursor % 128));
+
 	g_pCnvs->setT3Font(&Exo_16_Bold_Italic);
 	g_pCnvs->setTextColor(s_iColorWhite);
 	g_pCnvs->println(pChz);
