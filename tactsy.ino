@@ -100,7 +100,7 @@ static const char * s_mpParamPChz[] =
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
 static const u8 s_cBSsmAddr = 3;
-static const u32 s_mpParamABAddr[s_cBSsmAddr] =
+static const u32 s_mpParamABAddr[] =
 {
 	0xff81fc,		// PARAM_FbkcDeg
 	0x000199,		// PARAM_FlkcDeg
@@ -1852,27 +1852,35 @@ void loop()
 			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
 
-			static float s_degFbkcMin = 1000.0f;
+			static float s_degFbkcAnyMin = 0.0f;
+			static float s_degFbkcHighLoadMin = 0.0f;
 			static float s_degFbkcPrev = 0.0f;
 			static u32 s_msFbkcEventLast = 0;
 			static int s_cFbkcEvent = 0;
 			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
+			float gLoad = g_tactrix.GParam(PARAM_LoadGPerRev);
 
 			// Check for min FBKC reset event
 
 			if (fTouchRelease && g_xTouch >= 240 && g_yTouch <= 55)
 			{
-				s_degFbkcMin = 1000.0f;
+				s_degFbkcHighLoadMin = 1000.0f;
 				s_cFbkcEvent = 0;
 			}
 
-			// Check if we have a new FBKC event
+			// Check if we have a new FBKC event (ignore small, low-load events for display, but still log them)
 
-			if (degFbkc < s_degFbkcPrev)
+			static const float s_gLoadHighThreshold = 1.25f;
+			static const float s_degFbkcLowLoadThreshold = -3.0f;
+			if (degFbkc < s_degFbkcPrev && (gLoad > s_gLoadHighThreshold || degFbkc < s_degFbkcLowLoadThreshold))
+			{
 				++s_cFbkcEvent;
-			s_degFbkcPrev = degFbkc;
+				s_degFbkcHighLoadMin = min(degFbkc, s_degFbkcHighLoadMin);
+			}
 
-			s_degFbkcMin = min(degFbkc, s_degFbkcMin);
+			s_degFbkcPrev = degFbkc;
+			s_degFbkcAnyMin = min(degFbkc, s_degFbkcAnyMin);
+
 			if (degFbkc < 0.0f)
 				s_msFbkcEventLast = msCur;
 
@@ -1919,7 +1927,7 @@ void loop()
 			bool fWriteToLog = (s_nLogSuffix &&
 								(s_cWot >= s_cWotThreshold ||
 								 s_uIamMin < 1.0f ||
-								 (s_degFbkcMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
+								 (s_degFbkcAnyMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
 								 (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)));
 
 			g_pCnvs->setT3Font(&Exo_28_Bold_Italic);
@@ -2049,14 +2057,14 @@ void loop()
 
 			// Draw FBKC
 
-			if (degFbkc < 0.0f)
+			if (degFbkc < 0.0f && (gLoad > s_gLoadHighThreshold || degFbkc < s_degFbkcLowLoadThreshold))
 			{
 				g_pCnvs->setTextColor(s_iColorRed);
 				snprintf(aChz, DIM(aChz), "%.2f", degFbkc);
 			}
 			else
 			{
-				snprintf(aChz, DIM(aChz), "%.2f", s_degFbkcMin);
+				snprintf(aChz, DIM(aChz), "%.2f", s_degFbkcHighLoadMin);
 			}
 			g_pCnvs->setCursor(301 - g_pCnvs->strPixelLen(aChz), 26);
 			g_pCnvs->print(aChz);
