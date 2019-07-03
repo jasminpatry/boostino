@@ -1864,7 +1864,7 @@ void loop()
 
 			if (fTouchRelease && g_xTouch >= 240 && g_yTouch <= 55)
 			{
-				s_degFbkcHighLoadMin = 1000.0f;
+				s_degFbkcHighLoadMin = 0.0f;
 				s_cFbkcEvent = 0;
 			}
 
