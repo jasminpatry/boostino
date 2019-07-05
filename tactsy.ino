@@ -350,18 +350,6 @@ inline void TraceHex(bool f, const u8 * aB, u16 cB)
 
 
 
-// USB host configuration
-
-USBHost g_uhost;
-USBSerial g_userial(g_uhost);
-bool g_fUserialActive = false;
-
-static const u16 s_nIdTactrix = 0x0403;
-static const u16 s_nIdOpenPort20 = 0xcc4c;
-static const u32 s_dMsTimeoutDefault = 2000;
-
-
-
 // NOTE (jpatry) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
 //	https://github.com/NikolaKozina/j2534/blob/master/j2534.c . This fork (by one of the RomRaider devs) looks to be
 //	more up to date: https://github.com/dschultzca/j2534/blob/master/j2534.c
@@ -580,6 +568,18 @@ CLogHistory g_loghist;
 
 
 
+// USB host configuration
+
+USBHost g_uhost;
+USBSerial g_userial(g_uhost);
+bool g_fUserialActive = false;
+
+static const u16 s_nIdTactrix = 0x0403;
+static const u16 s_nIdOpenPort20 = 0xcc4c;
+static const u32 s_dMsTimeoutDefault = 2000;
+
+
+
 // Tactrix State
 
 enum TACTRIXS
@@ -635,7 +635,7 @@ protected:
 	bool			FMustReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
 	bool			FTrySkipMessage(u32 dMsTimeout = s_dMsTimeoutDefault);
 
-	bool			FTryIssueReadRequest();
+	bool			FTryIssuePollRequest();
 
 	void			FlushIncoming();
 
@@ -856,6 +856,8 @@ bool CTactrix::FTryReceiveMessage(MSGK msgk, u32 dMsTimeout)
 		return false;
 	}
 
+	// Receive succeeded; advance indices
+
 	m_iBRecvPrev = m_iBRecv;
 	m_iBRecv += cBMsg;
 
@@ -892,6 +894,8 @@ bool CTactrix::FTrySkipMessage(u32 dMsTimeout)
 			return false;
 		}
 	}
+
+	// Try each message type until we find one we recognize.
 
 	for (MSGK msgk = MSGK_Min; msgk < MSGK_Max; msgk = MSGK(msgk + 1))
 	{
@@ -1095,10 +1099,10 @@ bool CTactrix::FTryStartPolling()
 	}
 #endif // TEST_OFFLINE
 
-	return FTryIssueReadRequest();
+	return FTryIssuePollRequest();
 }
 
-bool CTactrix::FTryIssueReadRequest()
+bool CTactrix::FTryIssuePollRequest()
 {
 	// Issue address read request (A8)
 
@@ -1227,7 +1231,7 @@ bool CTactrix::FTryUpdatePolling()
 
 				// Try to re-issue request
 
-				if (!FTryIssueReadRequest())
+				if (!FTryIssuePollRequest())
 					return false;
 			}
 			else
