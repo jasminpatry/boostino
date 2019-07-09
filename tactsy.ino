@@ -16,7 +16,7 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 0
+#define DEBUG 1
 
 static const bool s_fTraceComms = false;
 static const bool s_fTraceTouch = true;
@@ -24,6 +24,8 @@ static const bool s_fTraceTouch = true;
 // Set to 1 to test without being plugged into the vehicle
 
 #define TEST_OFFLINE 0
+
+#define TEST_ANALOG 1
 
 
 
@@ -1759,10 +1761,24 @@ void setup()
 	// Initialize USB host interface
 
 	g_uhost.begin();
+
+	// Teensy has 13-bit ADC (defaults to 10-bit to be Arduino-compatible)
+
+	analogReadResolution(13);
 }
 
 void loop()
 {
+#if TEST_ANALOG
+	int nWideband = analogRead(A21);
+	float gV = (nWideband / 8191.0f) * 3.3f;
+
+	static float s_gV = 0.0f;
+	s_gV = gV * 0.05 + 0.95 * s_gV;
+	Trace(true, s_gV, 7);
+	Trace(true, "\n");
+#endif // TEST_ANALOG
+
 	g_uhost.Task();
 
 	// Flip buffers
