@@ -11,6 +11,8 @@
 
 #include "gaugeBg.h"
 #include "gaugeFg.h"
+#include "labelMph.h"
+#include "labelAfr.h"
 
 
 
@@ -19,13 +21,15 @@
 #define DEBUG 1
 
 static const bool s_fTraceComms = false;
-static const bool s_fTraceTouch = true;
+static const bool s_fTraceTouch = false;
 
-// Set to 1 to test without being plugged into the vehicle
+// Set to 1 to test without Tactrix
 
-#define TEST_OFFLINE 0
+#define TEST_NO_TACTRIX 1
 
-#define TEST_ANALOG 1
+// Set to 1 to test Tactrix without being plugged into the vehicle
+
+#define TEST_OFFLINE (0 || TEST_NO_TACTRIX)
 
 
 
@@ -71,6 +75,7 @@ enum PARAM
 	PARAM_IpwMs,
 	PARAM_IdcPct,		// NOTE (jpatry) calculated from PARAM_Rpm and PARAM_IpwMs
 	PARAM_Afr1,
+	PARAM_WidebandAfr,	// Read from analog input
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -98,6 +103,7 @@ static const char * s_mpParamPChz[] =
 	"Fuel Injector #1 Pulse Width",						// PARAM_IpwMs
 	"Injector Duty Cycle",								// PARAM_IdcPct
 	"A/F Sensor #1",									// PARAM_Afr1
+	"Wideband A/F Sensor",								// PARAM_WidebandAfr
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -117,6 +123,7 @@ static const u32 s_mpParamABAddr[] =
 	0x000020,		// PARAM_IpwMs
 	0x000000,		// PARAM_IdcPct
 	0x000046,		// PARAM_Afr1
+	0x000000,		// PARAM_WidebandAfr
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -135,6 +142,7 @@ static const u8 s_mpParamCB[] =
 	 1,							// PARAM_IpwMs
 	 0,							// PARAM_IdcPct
 	 1,							// PARAM_Afr1
+	 0,							// PARAM_WidebandAfr
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -175,7 +183,6 @@ static const PARAM s_aParamPoll[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
-	PARAM_Afr1,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -193,7 +200,7 @@ static const PARAM s_aParamLog[] =
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_Iam,
-	PARAM_Afr1,
+	PARAM_WidebandAfr,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -579,6 +586,8 @@ bool g_fUserialActive = false;
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
 static const u32 s_dMsTimeoutDefault = 2000;
+static const int s_cBitAnalog = 13;
+static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
 
@@ -929,6 +938,7 @@ bool CTactrix::FTryConnect()
 		Disconnect();
 	}
 
+#if !TEST_NO_TACTRIX
 	if (!g_userial)
 	{
 		return false;
@@ -1025,6 +1035,7 @@ bool CTactrix::FTryConnect()
 	SendCommand(aBFilter, sizeof(aBFilter) - 1);
 	if (!FMustReceiveMessage("arf3 0 10\r\n"))
 		return false;
+#endif // !TEST_NO_TACTRIX
 
 	m_tactrixs = TACTRIXS_Connected;
 
@@ -1036,10 +1047,12 @@ bool CTactrix::FTryStartPolling()
 	if (m_tactrixs != TACTRIXS_Connected)
 		return false;
 
+#if !TEST_NO_TACTRIX
 	// Equivalent to J2534 PassThruWriteMsgs; send SSM init sequence
 
 	const u8 aBSsmInit[] = { "att3 6 0 2000000 11\r\n\x80\x10\xf0\x01\xbf\x40" };
 	SendCommand(aBSsmInit, sizeof(aBSsmInit) - 1);
+#endif // !TEST_NO_TACTRIX
 
 #if !TEST_OFFLINE
 	// Start of loopback message
@@ -1056,12 +1069,14 @@ bool CTactrix::FTryStartPolling()
 
 	if (!FMustReceiveMessage(MSGK_LoopbackEnd))
 		return false;
-#endif // TEST_OFFLINE
+#endif // !TEST_OFFLINE
 
+#if !TEST_NO_TACTRIX
 	// Acknowledgement
 
 	if (!FMustReceiveMessage("aro 11\r\n"))
 		return false;
+#endif // !TEST_NO_TACTRIX
 
 #if !TEST_OFFLINE
 	// Start of normal message
@@ -1099,13 +1114,14 @@ bool CTactrix::FTryStartPolling()
 		TraceHex(true, aBSsmInitReply, cBSsmInitReply);
 		Trace(true, "\n");
 	}
-#endif // TEST_OFFLINE
+#endif // !TEST_OFFLINE
 
 	return FTryIssuePollRequest();
 }
 
 bool CTactrix::FTryIssuePollRequest()
 {
+#if !TEST_NO_TACTRIX
 	// Issue address read request (A8)
 
 	m_cBParamPoll = 0;
@@ -1158,9 +1174,9 @@ bool CTactrix::FTryIssuePollRequest()
 	ASSERT(cBReadRequest - iSsmStart == cBSsmRead);
 
 	SendCommand(aBReadRequest, cBReadRequest);
+#endif // !TEST_NO_TACTRIX
 
 #if !TEST_OFFLINE
-
 	int iBLoopback = iSsmStart;
 
 	while (iBLoopback < cBReadRequest)
@@ -1187,8 +1203,10 @@ bool CTactrix::FTryIssuePollRequest()
 	}
 #endif // !TEST_OFFLINE
 
+#if !TEST_NO_TACTRIX
 	if (!FMustReceiveMessage("aro 12\r\n"))
 		return false;
+#endif // !TEST_NO_TACTRIX
 
 	m_tactrixs = TACTRIXS_Polling;
 	m_msPollingStart = millis();
@@ -1198,8 +1216,13 @@ bool CTactrix::FTryIssuePollRequest()
 
 bool CTactrix::FTryUpdatePolling()
 {
-	if (m_tactrixs != TACTRIXS_Polling || !g_userial)
+	if (m_tactrixs != TACTRIXS_Polling)
 		return false;
+
+#if !TEST_NO_TACTRIX
+	if (!g_userial)
+		return false;
+#endif // !TEST_NO_TACTRIX
 
 	u32 msCur = millis();
 
@@ -1278,16 +1301,6 @@ bool CTactrix::FTryUpdatePolling()
 
 		ProcessParamValue(param, nValue);
 	}
-
-	// Update computed params
-
-	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
-
-	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
-
-	if (!FMustReceiveMessage(MSGK_ReplyEnd))
-		return false;
-
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
 
@@ -1306,7 +1319,43 @@ bool CTactrix::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_SpeedMph] = 113.0f;
 
 	m_mpParamGValue[PARAM_IatF] = 109.0f;
+
+	m_mpParamGValue[PARAM_LoadGPerRev] = 2.0f;
 #endif // TEST_OFFLINE
+
+	// Update computed params
+
+	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
+
+	// Update wideband AFR (from analog reading)
+
+	static const int s_nPortWideband = A21;
+	static const float s_gR1 = 2.192f;
+	static const float s_gR2 = 3.316f;
+	static const float s_gVTactsy = 3.3f;
+	static const float s_gVWideband = 5.0f;
+	static const float s_gAfrMin = 7.35f;
+	static const float s_gAfrMax = 22.39f;
+
+	int nWideband = analogRead(s_nPortWideband);
+	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
+	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) + s_gAfrMin;
+
+#if 1 // &&&
+	static float s_gAfr = 0.0f;
+	s_gAfr = gAfr * 0.05 + 0.95 * s_gAfr;
+	Trace(true, s_gAfr, 7);
+	Trace(true, "\n");
+#endif
+
+	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
+
+#if !TEST_OFFLINE
+	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
+
+	if (!FMustReceiveMessage(MSGK_ReplyEnd))
+		return false;
+#endif // !TEST_OFFLINE
 
 	// Update log
 
@@ -1379,7 +1428,7 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		break;
 
 	default:
-		CASSERT(PARAM_Afr1 == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_WidebandAfr == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
@@ -1764,21 +1813,11 @@ void setup()
 
 	// Teensy has 13-bit ADC (defaults to 10-bit to be Arduino-compatible)
 
-	analogReadResolution(13);
+	analogReadResolution(s_cBitAnalog);
 }
 
 void loop()
 {
-#if TEST_ANALOG
-	int nWideband = analogRead(A21);
-	float gV = (nWideband / 8191.0f) * 3.3f;
-
-	static float s_gV = 0.0f;
-	s_gV = gV * 0.05 + 0.95 * s_gV;
-	Trace(true, s_gV, 7);
-	Trace(true, "\n");
-#endif // TEST_ANALOG
-
 	g_uhost.Task();
 
 	// Flip buffers
@@ -1859,12 +1898,15 @@ void loop()
 		}
 	}
 
+#if !TEST_NO_TACTRIX
 	if (!g_fUserialActive)
 	{
 		if (msCur > s_msSplashMax)
 			DisplayStatus("Connect to Tactrix");
 	}
-	else if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
+	else
+#endif // !TEST_NO_TACTRIX
+	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
 	{
 		if (msCur > s_msSplashMax)
 			DisplayStatus("Connecting...");
@@ -2061,6 +2103,22 @@ void loop()
 				{
 					u8 * aBRow = g_pCnvs->getBuffer() + iY * s_dXScreen;
 					for (int iX = g_aNBbGaugeFg[0]; iX < g_aNBbGaugeFg[2]; ++iX)
+					{
+						u8 b = *pB++;
+						if (b)
+							aBRow[iX] = b >> 3;
+					}
+				}
+			}
+
+			{
+				// Draw MPH
+
+				const u8 * pB = &g_aBLabelMph[0];
+				for (int iY = g_aNBbLabelMph[1]; iY < g_aNBbLabelMph[3]; ++iY)
+				{
+					u8 * aBRow = g_pCnvs->getBuffer() + iY * s_dXScreen;
+					for (int iX = g_aNBbLabelMph[0]; iX < g_aNBbLabelMph[2]; ++iX)
 					{
 						u8 b = *pB++;
 						if (b)
