@@ -3,7 +3,7 @@
 
 #include "Arduino.h"
 
-extern const uint16_t g_aNBbLabelMph[];
+extern const uint16_t g_aNBbLabelMph[4];
 extern const uint8_t g_aBLabelMph[];
 
 #endif // LABELMPH_H

@@ -21,7 +21,7 @@
 #define DEBUG 1
 
 static const bool s_fTraceComms = false;
-static const bool s_fTraceTouch = false;
+static const bool s_fTraceTouch = true;
 
 // Set to 1 to test without Tactrix
 
@@ -586,7 +586,7 @@ bool g_fUserialActive = false;
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
 static const u32 s_dMsTimeoutDefault = 2000;
-static const int s_cBitAnalog = 13;
+static const int s_cBitAnalog = 12;	// BB (jpatry) seems less noisy than 13
 static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
@@ -1341,13 +1341,6 @@ bool CTactrix::FTryUpdatePolling()
 	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
 	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) + s_gAfrMin;
 
-#if 1 // &&&
-	static float s_gAfr = 0.0f;
-	s_gAfr = gAfr * 0.05 + 0.95 * s_gAfr;
-	Trace(true, s_gAfr, 7);
-	Trace(true, "\n");
-#endif
-
 	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
 
 #if !TEST_OFFLINE
@@ -1645,6 +1638,21 @@ void DisplayStatus(const char * pChz)
 	g_pCnvs->println(pChz);
 }
 
+void DrawAbIntoCanvas(const u8 * aB, const u16 (&aNBb)[4])
+{
+	const u8 * pB = &aB[0];
+	for (int iY = aNBb[1]; iY < aNBb[3]; ++iY)
+	{
+		u8 * aBRow = g_pCnvs->getBuffer() + iY * s_dXScreen;
+		for (int iX = aNBb[0]; iX < aNBb[2]; ++iX)
+		{
+			u8 b = *pB++;
+			if (b)
+				aBRow[iX] = b >> 3;
+		}
+	}
+}
+
 
 
 // SD Card Configuration
@@ -1842,16 +1850,17 @@ void loop()
 		{
 			fTouch = true;
 
+			g_xTouch = map(posTouch.x, s_xTsMin, s_xTsMax, 0, s_dXScreen);
+			g_yTouch = map(posTouch.y, s_yTsMin, s_yTsMax, 0, s_dYScreen);
+
 			Trace(s_fTraceTouch, "Touch point: ");
-			Trace(s_fTraceTouch, posTouch.x);
+			Trace(s_fTraceTouch, g_xTouch);
 			Trace(s_fTraceTouch, " ");
-			Trace(s_fTraceTouch, posTouch.y);
-			Trace(s_fTraceTouch, " ");
+			Trace(s_fTraceTouch, g_yTouch);
+			Trace(s_fTraceTouch, " pressure ");
 			Trace(s_fTraceTouch, posTouch.z);
 			Trace(s_fTraceTouch, "\n");
 
-			g_xTouch = map(posTouch.x, s_xTsMin, s_xTsMax, 0, s_dXScreen);
-			g_yTouch = map(posTouch.y, s_yTsMin, s_yTsMax, 0, s_dYScreen);
 			g_fTouch = true;
 		}
 	}
@@ -1963,6 +1972,10 @@ void loop()
 				s_degFbkcHighLoadMin = 0.0f;
 				s_cFbkcEvent = 0;
 			}
+
+			static bool s_fDrawMph = false;
+			if (fTouchRelease && g_xTouch <= 100 && g_yTouch <= 40)
+				s_fDrawMph = !s_fDrawMph;
 
 			// Check if we have a new FBKC event (ignore small, low-load events for display, but still log them)
 
@@ -2095,37 +2108,16 @@ void loop()
 				}
 			}
 
-			{
-				// Draw boost gauge foreground
+			// Draw boost gauge foreground
 
-				const u8 * pB = &g_aBGaugeFg[0];
-				for (int iY = g_aNBbGaugeFg[1]; iY < g_aNBbGaugeFg[3]; ++iY)
-				{
-					u8 * aBRow = g_pCnvs->getBuffer() + iY * s_dXScreen;
-					for (int iX = g_aNBbGaugeFg[0]; iX < g_aNBbGaugeFg[2]; ++iX)
-					{
-						u8 b = *pB++;
-						if (b)
-							aBRow[iX] = b >> 3;
-					}
-				}
-			}
+			DrawAbIntoCanvas(&g_aBGaugeFg[0], g_aNBbGaugeFg);
 
-			{
-				// Draw MPH
+			// Draw MPH/AFR label
 
-				const u8 * pB = &g_aBLabelMph[0];
-				for (int iY = g_aNBbLabelMph[1]; iY < g_aNBbLabelMph[3]; ++iY)
-				{
-					u8 * aBRow = g_pCnvs->getBuffer() + iY * s_dXScreen;
-					for (int iX = g_aNBbLabelMph[0]; iX < g_aNBbLabelMph[2]; ++iX)
-					{
-						u8 b = *pB++;
-						if (b)
-							aBRow[iX] = b >> 3;
-					}
-				}
-			}
+			if (s_fDrawMph)
+				DrawAbIntoCanvas(&g_aBLabelMph[0], g_aNBbLabelMph);
+			else
+				DrawAbIntoCanvas(&g_aBLabelAfr[0], g_aNBbLabelAfr);
 
 			char aChz[16];
 
@@ -2147,12 +2139,33 @@ void loop()
 				}
 			}
 
+			if (s_fDrawMph)
 			{
 				// Draw speed
 
 				float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
-				g_pCnvs->setCursor(65 - g_pCnvs->strPixelLen(aChz), 10);
+				g_pCnvs->setCursor(66 - g_pCnvs->strPixelLen(aChz), 10);
+				g_pCnvs->print(aChz);
+			}
+			else
+			{
+				// Draw AFR and align at decimal point
+
+				float gAfr = g_tactrix.GParam(PARAM_WidebandAfr);
+
+				// Clamp at 19.9 because we don't have room for 2x.x
+
+				gAfr = min(19.9f, gAfr);
+
+				int cCh = snprintf(aChz, DIM(aChz), "%.1f", gAfr);
+
+				char chDec = aChz[cCh - 1];
+				aChz[cCh - 1] = '\0';
+
+				g_pCnvs->setCursor(47 - g_pCnvs->strPixelLen(aChz), 10);
+				aChz[cCh - 1] = chDec;
+
 				g_pCnvs->print(aChz);
 			}
 
