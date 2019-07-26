@@ -18,14 +18,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
-static const bool s_fTraceTouch = true;
+static const bool s_fTraceTouch = false;
 
 // Set to 1 to test without Tactrix
 
-#define TEST_NO_TACTRIX 1
+#define TEST_NO_TACTRIX 0
 
 // Set to 1 to test Tactrix without being plugged into the vehicle
 
@@ -586,7 +586,7 @@ bool g_fUserialActive = false;
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
 static const u32 s_dMsTimeoutDefault = 2000;
-static const int s_cBitAnalog = 12;	// BB (jpatry) seems less noisy than 13
+static const int s_cBitAnalog = 13;
 static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
@@ -1336,10 +1336,11 @@ bool CTactrix::FTryUpdatePolling()
 	static const float s_gVWideband = 5.0f;
 	static const float s_gAfrMin = 7.35f;
 	static const float s_gAfrMax = 22.39f;
+	static const float s_rCorrection = 1.0262;
 
 	int nWideband = analogRead(s_nPortWideband);
 	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
-	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) + s_gAfrMin;
+	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) * s_rCorrection + s_gAfrMin;
 
 	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
 
@@ -2154,9 +2155,18 @@ void loop()
 
 				float gAfr = g_tactrix.GParam(PARAM_WidebandAfr);
 
+				// Filter values since raw values are noisy
+
+				static float s_gAfrPrev = 14.7;
+				static float s_uAfrFilter = 0.9f;
+
+				gAfr = s_uAfrFilter * s_gAfrPrev + (1.0f - s_uAfrFilter) * gAfr;
+
 				// Clamp at 19.9 because we don't have room for 2x.x
 
 				gAfr = min(19.9f, gAfr);
+
+				s_gAfrPrev = gAfr;
 
 				int cCh = snprintf(aChz, DIM(aChz), "%.1f", gAfr);
 
