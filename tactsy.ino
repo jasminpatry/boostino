@@ -78,7 +78,6 @@ enum PARAM
 	PARAM_Afr1,
 	PARAM_WidebandAfr,	// Read from analog input
 	PARAM_TargetAfr,
-	PARAM_TargetAfr2,
 	PARAM_MafVoltage,
 
 	PARAM_Max,
@@ -109,8 +108,7 @@ static const char * s_mpParamPChz[] =
 	"Injector Duty Cycle",								// PARAM_IdcPct
 	"A/F Sensor #1",									// PARAM_Afr1
 	"Wideband A/F Sensor",								// PARAM_WidebandAfr
-	"Final Fueling Base (4-byte)* (estimated AFR)",		// PARAM_TargetAfr
-	"Final Fueling Base (2-byte)* (estimaged AFR)",		// PARAM_TargetAfr2
+	"Final Fueling Base (2-byte)* (estimated AFR)",		// PARAM_TargetAfr
 	"Mass Airflow Sensor Voltage (V)",					// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
@@ -133,8 +131,7 @@ static const u32 s_mpParamABAddr[] =
 	0x000000,		// PARAM_IdcPct
 	0x000046,		// PARAM_Afr1
 	0x000000,		// PARAM_WidebandAfr
-	0xff7318,		// PARAM_TargetAfr
-	0xff688a,		// PARAM_TargetAfr2
+	0xff688a,		// PARAM_TargetAfr
 	0x00001d,		// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
@@ -156,8 +153,7 @@ static const u8 s_mpParamCB[] =
 	 0,		// PARAM_IdcPct
 	 1,		// PARAM_Afr1
 	 0,		// PARAM_WidebandAfr
-	 4,		// PARAM_TargetAfr
-	 2,		// PARAM_TargetAfr2
+	 2,		// PARAM_TargetAfr
 	 1,		// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
@@ -200,7 +196,6 @@ static const PARAM s_aParamPoll[] =
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
 	PARAM_TargetAfr,
-	PARAM_TargetAfr2,
 	PARAM_MafVoltage,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
@@ -222,7 +217,6 @@ static const PARAM s_aParamLog[] =
 	PARAM_Iam,
 	PARAM_WidebandAfr,
 	PARAM_TargetAfr,
-	PARAM_TargetAfr2,
 	PARAM_MafVoltage,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
@@ -1451,10 +1445,6 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		break;
 
 	case PARAM_TargetAfr:
-		ng.m_g = 14.7f / max(ng.m_g, 0.01f);
-		break;
-
-	case PARAM_TargetAfr2:
 		ng.m_g = (14.7f / 0.0004882812f) / float(nValue);
 		break;
 
@@ -2077,7 +2067,7 @@ void loop()
 
 			// Write to log if WOT for long enough, or if min IAM < 1 or a knock event happened recently
 
-			static const bool s_fLogAlways = true;
+			static const bool s_fLogAlways = false;
 
 			bool fWriteToLog = (s_nLogSuffix &&
 								gSpeedMph >= 5.0f &&
