@@ -1354,9 +1354,9 @@ bool CTactrix::FTryUpdatePolling()
 	static const float s_gR2 = 3.316f;
 	static const float s_gVTactsy = 3.3f;
 	static const float s_gVWideband = 5.0f;
-	static const float s_gAfrMin = 7.35f;
-	static const float s_gAfrMax = 22.39f;
-	static const float s_rCorrection = 1.0262; // &&& double check this
+	static const float s_gAfrMin = 9.0f;
+	static const float s_gAfrMax = 17.99f;
+	static const float s_rCorrection = 1.05f; // &&& double check this
 
 	int nWideband = analogRead(s_nPortWideband);
 	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
