@@ -67,8 +67,9 @@ enum PARAM
 	PARAM_BoostPsi,
 	PARAM_Iam,
 	PARAM_CoolantTempF,	// BB (jpatry) Currently unused
-	PARAM_LoadGPerRev,
 	PARAM_Rpm,
+	PARAM_Maf,
+	PARAM_LoadGPerRev,	// NOTE (jpatry) Calculated from PARAM_Rpm and PARAM_Maf
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
@@ -76,6 +77,8 @@ enum PARAM
 	PARAM_IdcPct,		// NOTE (jpatry) calculated from PARAM_Rpm and PARAM_IpwMs
 	PARAM_Afr1,
 	PARAM_WidebandAfr,	// Read from analog input
+	PARAM_TargetAfr,
+	PARAM_MafVoltage,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -95,8 +98,9 @@ static const char * s_mpParamPChz[] =
 	"Manifold Relative Pressure (psi)",					// PARAM_BoostPsi
 	"IAM (multiplier)",									// PARAM_Iam
 	"Coolant Temperature (F)",							// PARAM_CoolantTempF
-	"Engine Load (Calculated) (g/rev)",					// PARAM_LoadGPerRev
 	"Engine Speed (rpm)",								// PARAM_Rpm
+	"Mass Airflow (g/s)",								// PARAM_Maf
+	"Engine Load (Calculated) (g/rev)",					// PARAM_LoadGPerRev
 	"Intake Air Temperature (F)",						// PARAM_IatF
 	"Throttle Opening Angle (%)",						// PARAM_ThrottlePct
 	"Vehicle Speed (mph)",								// PARAM_SpeedMph
@@ -104,6 +108,8 @@ static const char * s_mpParamPChz[] =
 	"Injector Duty Cycle",								// PARAM_IdcPct
 	"A/F Sensor #1",									// PARAM_Afr1
 	"Wideband A/F Sensor",								// PARAM_WidebandAfr
+	"Final Fueling Base (2-byte)* (estimated AFR)",		// PARAM_TargetAfr
+	"Mass Airflow Sensor Voltage (V)",					// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -115,8 +121,9 @@ static const u32 s_mpParamABAddr[] =
 	0x000024,		// PARAM_BoostPsi
 	0x0000f9,		// PARAM_Iam
 	0x000008,		// PARAM_CoolantTempF
-	0xff6410,		// PARAM_LoadGPerRev
 	0x00000e,		// PARAM_Rpm
+	0x000013,		// PARAM_Maf
+	0x000000,		// PARAM_LoadGPerRev
 	0x000012,		// PARAM_IatF
 	0x000015,		// PARAM_ThrottlePct
 	0x000010,		// PARAM_SpeedMph
@@ -124,25 +131,30 @@ static const u32 s_mpParamABAddr[] =
 	0x000000,		// PARAM_IdcPct
 	0x000046,		// PARAM_Afr1
 	0x000000,		// PARAM_WidebandAfr
+	0xff688a,		// PARAM_TargetAfr
+	0x00001d,		// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
 static const u8 s_mpParamCB[] =
 {
-	 4,							// PARAM_FbkcDeg
-	 1,							// PARAM_FlkcDeg
-	 1,							// PARAM_BoostPsi
-	 1,							// PARAM_Iam
-	 1,							// PARAM_CoolantTempF
-	 4,							// PARAM_LoadGPerRev
-	 2,							// PARAM_Rpm
-	 1,							// PARAM_IatF
-	 1,							// PARAM_ThrottlePct
-	 1,							// PARAM_SpeedMph
-	 1,							// PARAM_IpwMs
-	 0,							// PARAM_IdcPct
-	 1,							// PARAM_Afr1
-	 0,							// PARAM_WidebandAfr
+	 4,		// PARAM_FbkcDeg
+	 1,		// PARAM_FlkcDeg
+	 1,		// PARAM_BoostPsi
+	 1,		// PARAM_Iam
+	 1,		// PARAM_CoolantTempF
+	 2,		// PARAM_Rpm
+	 2,		// PARAM_Maf
+	 0,		// PARAM_LoadGPerRev
+	 1,		// PARAM_IatF
+	 1,		// PARAM_ThrottlePct
+	 1,		// PARAM_SpeedMph
+	 1,		// PARAM_IpwMs
+	 0,		// PARAM_IdcPct
+	 1,		// PARAM_Afr1
+	 0,		// PARAM_WidebandAfr
+	 2,		// PARAM_TargetAfr
+	 1,		// PARAM_MafVoltage
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -175,14 +187,16 @@ CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 static const PARAM s_aParamPoll[] =
 {
 	PARAM_FbkcDeg,
-	PARAM_LoadGPerRev,
 	PARAM_Rpm,
+	PARAM_Maf,
 	PARAM_FlkcDeg,
 	PARAM_Iam,
 	PARAM_BoostPsi,
 	PARAM_IatF,
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
+	PARAM_TargetAfr,
+	PARAM_MafVoltage,
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -194,6 +208,7 @@ static const PARAM s_aParamLog[] =
 {
 	PARAM_LoadGPerRev,
 	PARAM_Rpm,
+	PARAM_Maf,
 	PARAM_FbkcDeg,
 	PARAM_FlkcDeg,
 	PARAM_BoostPsi,
@@ -201,6 +216,8 @@ static const PARAM s_aParamLog[] =
 	PARAM_ThrottlePct,
 	PARAM_Iam,
 	PARAM_WidebandAfr,
+	PARAM_TargetAfr,
+	PARAM_MafVoltage,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -586,7 +603,7 @@ bool g_fUserialActive = false;
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
 static const u32 s_dMsTimeoutDefault = 2000;
-static const int s_cBitAnalog = 12;	// BB (jpatry) seems less noisy than 13
+static const int s_cBitAnalog = 13;
 static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
@@ -1320,11 +1337,14 @@ bool CTactrix::FTryUpdatePolling()
 
 	m_mpParamGValue[PARAM_IatF] = 109.0f;
 
-	m_mpParamGValue[PARAM_LoadGPerRev] = 2.0f;
+	m_mpParamGValue[PARAM_Maf] = 50.0f;
+
+	m_mpParamGValue[PARAM_Rpm] = 2500.0f;
 #endif // TEST_OFFLINE
 
-	// Update computed params
+	// Update calculated params
 
+	m_mpParamGValue[PARAM_LoadGPerRev] = GParam(PARAM_Maf) * 60.0f / max(GParam(PARAM_Rpm), 1.0f);
 	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
 
 	// Update wideband AFR (from analog reading)
@@ -1334,12 +1354,13 @@ bool CTactrix::FTryUpdatePolling()
 	static const float s_gR2 = 3.316f;
 	static const float s_gVTactsy = 3.3f;
 	static const float s_gVWideband = 5.0f;
-	static const float s_gAfrMin = 7.35f;
-	static const float s_gAfrMax = 22.39f;
+	static const float s_gAfrMin = 9.0f;
+	static const float s_gAfrMax = 17.99f;
+	static const float s_rCorrection = 1.05f; // &&& double check this
 
 	int nWideband = analogRead(s_nPortWideband);
 	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
-	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) + s_gAfrMin;
+	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) * s_rCorrection + s_gAfrMin;
 
 	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
 
@@ -1378,7 +1399,6 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 	switch (param)
 	{
 	case PARAM_FbkcDeg:
-	case PARAM_LoadGPerRev:
 		// No conversion necessary
 
 		break;
@@ -1404,6 +1424,10 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = 0.25f * float(nValue);
 		break;
 
+	case PARAM_Maf:
+		ng.m_g = 0.01f * float(nValue);
+		break;
+
 	case PARAM_ThrottlePct:
 		ng.m_g = float(nValue) * (100.0f / 255.0f);
 		break;
@@ -1420,8 +1444,16 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * (14.7f / 128.0f);
 		break;
 
+	case PARAM_TargetAfr:
+		ng.m_g = (14.7f / 0.0004882812f) / float(nValue);
+		break;
+
+	case PARAM_MafVoltage:
+		ng.m_g = float(nValue) * (1.0f / 50.0f);
+		break;
+
 	default:
-		CASSERT(PARAM_WidebandAfr == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_MafVoltage == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
@@ -2031,10 +2063,16 @@ void loop()
 			else
 				s_cWot = 0;
 
+			float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
+
 			// Write to log if WOT for long enough, or if min IAM < 1 or a knock event happened recently
 
+			static const bool s_fLogAlways = false;
+
 			bool fWriteToLog = (s_nLogSuffix &&
-								(s_cWot >= s_cWotThreshold ||
+								gSpeedMph >= 5.0f &&
+								(s_fLogAlways ||
+								 s_cWot >= s_cWotThreshold ||
 								 s_uIamMin < 1.0f ||
 								 (s_degFbkcAnyMin < 0.0f && msCur - s_msFbkcEventLast < s_msLogAfterEvent) ||
 								 (s_degFlkcMin < 0.0f && msCur - s_msFlkcEventLast < s_msLogAfterEvent)));
@@ -2143,7 +2181,6 @@ void loop()
 			{
 				// Draw speed
 
-				float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gSpeedMph)));
 				g_pCnvs->setCursor(66 - g_pCnvs->strPixelLen(aChz), 10);
 				g_pCnvs->print(aChz);
@@ -2154,9 +2191,18 @@ void loop()
 
 				float gAfr = g_tactrix.GParam(PARAM_WidebandAfr);
 
+				// Filter values since raw values are noisy
+
+				static float s_gAfrPrev = 14.7;
+				static float s_uAfrFilter = 0.8f;
+
+				gAfr = s_uAfrFilter * s_gAfrPrev + (1.0f - s_uAfrFilter) * gAfr;
+
 				// Clamp at 19.9 because we don't have room for 2x.x
 
 				gAfr = min(19.9f, gAfr);
+
+				s_gAfrPrev = gAfr;
 
 				int cCh = snprintf(aChz, DIM(aChz), "%.1f", gAfr);
 
