@@ -158,6 +158,7 @@ static const u8 s_mpParamCB[] =
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
+// BB (jpatry) Learning Table value data, for future:
 // { 0xff31d4, 4, "A/F Learning #1 A (Stored)*" }, // float, x*100, %
 // { 0xff31dc, 4, "A/F Learning #1 B (Stored)*" }, // float, x*100, %
 // { 0xff31e4, 4, "A/F Learning #1 C (Stored)*" }, // float, x*100, %
@@ -165,10 +166,10 @@ CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 // { 0x0000d1, 1, "A/F Learning #3" }, // u8, (x-128)*100/128, %
 // { 0x000023, 1, "Atmospheric Pressure" }, //u8,  x*37/255, psi
 // { 0x00001c, 1, "Battery Voltage" }, // u8, x*8/100, V
-// // { 0x000008, 1, "Coolant Temperature" }, // u8, 32+9*(x-40)/5, F
+// { 0x000008, 1, "Coolant Temperature" }, // u8, 32+9*(x-40)/5, F
 // { 0xff8298, 4, "Fine Learning Knock Correction (4-byte)*" }, // float, x, degrees
 // { 0xff329c, 4, "IAM (4-byte)*" }, // float, x, multiplier
-// // { 0x000012, 1, "Intake Air Temperature" }, // u8, 32+9*(x-40)/5, F
+// { 0x000012, 1, "Intake Air Temperature" }, // u8, 32+9*(x-40)/5, F
 // { 0x0cce3c, 4, "A/F Learning #1 Airflow Ranges", 3 }, // float, x, g/s
 // { 0x0d3dd8, 4 ,"Fine Correction Columns (Load)", 4 }, // float, x, g/rev
 // { 0x0d3dbc, 4 ,"Fine Correction Rows (RPM)", 6 }, // float, x, RPM
@@ -603,6 +604,11 @@ bool g_fUserialActive = false;
 static const u16 s_nIdTactrix = 0x0403;
 static const u16 s_nIdOpenPort20 = 0xcc4c;
 static const u32 s_dMsTimeoutDefault = 2000;
+
+
+
+// Wideband analog input
+
 static const int s_cBitAnalog = 13;
 static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
@@ -1296,7 +1302,7 @@ bool CTactrix::FTryUpdatePolling()
 	const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
 	const u8 * pBData = pSsm->PBData();
 
-	// &&& Need to handle replies split over multiple messages
+	// BB (jpatry) TODO: Handle replies split over multiple messages
 
 	if (pSsm->CBData() != m_cBParamPoll)
 	{
@@ -1356,7 +1362,7 @@ bool CTactrix::FTryUpdatePolling()
 	static const float s_gVWideband = 5.0f;
 	static const float s_gAfrMin = 9.0f;
 	static const float s_gAfrMax = 17.99f;
-	static const float s_rCorrection = 1.05f; // &&& double check this
+	static const float s_rCorrection = 1.05f; // BB (jpatry) Seems to drift? Serial interface would be better.
 
 	int nWideband = analogRead(s_nPortWideband);
 	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
@@ -1775,6 +1781,8 @@ void UpdateLog()
 
 
 
+// Arduino setup() func
+
 void setup()
 {
 #if DEBUG
@@ -1856,13 +1864,21 @@ void setup()
 	analogReadResolution(s_cBitAnalog);
 }
 
+
+
+// Arduino loop() func
+
 void loop()
 {
+	// Update USB
+
 	g_uhost.Task();
 
 	// Flip buffers
 
 	swap(g_pCnvs, g_pCnvsPrev);
+
+	// Draw splash screen for 5 seconds, or until we connect
 
 	static const u32 s_msSplashMax = 5000;
 
@@ -2271,7 +2287,7 @@ void loop()
 						s_iColorWhiteMic,
 						s_iColorWhite);
 
-			// IAM
+			// IAM alarm
 
 			if (s_uIamMin < 1.0f)
 			{
