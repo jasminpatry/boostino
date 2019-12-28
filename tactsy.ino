@@ -18,14 +18,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
-static const bool s_fTraceTouch = true;
+static const bool s_fTraceTouch = false;
 
 // Set to 1 to test without Tactrix
 
-#define TEST_NO_TACTRIX 1
+#define TEST_NO_TACTRIX 0
 
 // Set to 1 to test Tactrix without being plugged into the vehicle
 
