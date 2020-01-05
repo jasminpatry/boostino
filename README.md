@@ -13,7 +13,7 @@ See [this thread on NASIOC](https://forums.nasioc.com/forums/showthread.php?t=28
 
 # Compilation
 
-This project is built as an Arduino sketch. I used Arduino 1.8.8, but later version will ilkely work too. You will also need the Teensyduino add-on
+This project is built as an Arduino sketch. I used Arduino 1.8.8, but later version will likely work too. You will also need the Teensyduino add-on
 (https://www.pjrc.com/teensy/td_download.html), and the following libraries:
 
 * My fork of ILI9341_t3: https://github.com/jasminpatry/ILI9341_t3
@@ -29,7 +29,7 @@ This project was built using the following hardware:
 * [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
 * [Elcoho 10 Pieces Plastic Waterproof Boxes Junction Case Compatible with Electronic Project 3.94 × 2.36 × 0.98 Inches, Black](https://www.amazon.com/gp/product/B07G8S6XLV/)
 * Protoboard; I used a board from [this set](https://www.amazon.com/gp/product/B074X2GDH2), trimmed to fit, but any protoboard should work fine.
-* For the faceplate, I had [faceplate.eps](../blob/master/faceplate.eps) laser-cut by https://www.ponoko.com/ using:
+* For the faceplate, I had [faceplate.eps](../master/faceplate.eps) laser-cut by https://www.ponoko.com/ using:
     * Acrylic - Two Color - Brushed Silver on Black
     * 0.059 inches thick
     * P1 - 7.126 inches long x 7.126 inches wide
