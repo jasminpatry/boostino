@@ -1,12 +1,24 @@
-// Tactsy -- A Simple Tactrix OP 2.0 <-> Teensy 3.6 Interface. Pronounced "taxi".
-// Copyright (c) 2019 Jasmin Patry
+// Boostino -- A Teensy 3.6/Tactrix OP 2.0 logger and gauge.
+// Copyright (c) 2019, 2020 Jasmin Patry
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <Adafruit_GFX.h>
 #include <font_Exo-BoldItalic.h>
 #include <ILI9341_t3.h>
 #include <SD.h>
 #include <USBHost_t36.h>
-#include <Wire.h>
 #include <XPT2046_Touchscreen.h>
 
 #include "gaugeBg.h"
@@ -373,7 +385,7 @@ inline void TraceHex(bool f, const u8 * aB, u16 cB)
 			Trace(true, #f);					\
 			Trace(true, "\n");					\
 		}										\
-	} while(0);
+	} while(0)
 
 
 
@@ -1358,14 +1370,14 @@ bool CTactrix::FTryUpdatePolling()
 	static const int s_nPortWideband = A21;
 	static const float s_gR1 = 2.192f;
 	static const float s_gR2 = 3.316f;
-	static const float s_gVTactsy = 3.3f;
+	static const float s_gVTeensy = 3.3f;
 	static const float s_gVWideband = 5.0f;
 	static const float s_gAfrMin = 9.0f;
 	static const float s_gAfrMax = 17.99f;
 	static const float s_rCorrection = 1.05f; // BB (jpatry) Seems to drift? Serial interface would be better.
 
 	int nWideband = analogRead(s_nPortWideband);
-	float gV = (nWideband * s_rAnalog) * s_gVTactsy * (s_gR1 + s_gR2) / s_gR2;
+	float gV = (nWideband * s_rAnalog) * s_gVTeensy * (s_gR1 + s_gR2) / s_gR2;
 	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) * s_rCorrection + s_gAfrMin;
 
 	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
@@ -1790,7 +1802,11 @@ void setup()
 		(void) 0; // wait for Arduino Serial Monitor
 #endif // DEBUG
 
-	Serial.println("\n\nTactsy 0.1");
+	Serial.println("\n\nBoostino 0.1  Copyright (C) 2019, 2020  Jasmin Patry\n");
+	Serial.println("This program comes with ABSOLUTELY NO WARRANTY.\n");
+    Serial.println("This is free software, and you are welcome to redistribute it\n");
+    Serial.println("under certain conditions. For details see\n");
+	Serial.println("https://github.com/jasminpatry/boostino/blob/master/COPYING\n\n");
 
 	// Initialize OLED
 
