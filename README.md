@@ -13,7 +13,7 @@ See [this thread on NASIOC](https://forums.nasioc.com/forums/showthread.php?t=28
 
 # Compilation
 
-This project is built as an Arduino sketch. I used Arduino 1.8.8, but later version will likely work too. You will also need the Teensyduino add-on
+This project is built as an Arduino sketch. I used Arduino 1.8.8, but later versions will likely work too. You will also need the Teensyduino add-on
 (https://www.pjrc.com/teensy/td_download.html), and the following libraries:
 
 * My fork of ILI9341_t3: https://github.com/jasminpatry/ILI9341_t3
