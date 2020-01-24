@@ -1368,16 +1368,15 @@ bool CTactrix::FTryUpdatePolling()
 	// Update wideband AFR (from analog reading)
 
 	static const int s_nPortWideband = A21;
-	static const float s_gR1 = 2.192f;
-	static const float s_gR2 = 3.316f;
+	static const float s_gVWideband = 3.0f;
 	static const float s_gVTeensy = 3.3f;
-	static const float s_gVWideband = 5.0f;
-	static const float s_gAfrMin = 9.0f;
-	static const float s_gAfrMax = 17.99f;
-	static const float s_rCorrection = 1.05f; // BB (jpatry) Seems to drift? Serial interface would be better.
+	static const float s_gLambdaOne = 14.7f;
+	static const float s_gAfrMin = 0.612f * s_gLambdaOne;
+	static const float s_gAfrMax = 1.225f * s_gLambdaOne;
+	static const float s_rCorrection = 1.0f;
 
 	int nWideband = analogRead(s_nPortWideband);
-	float gV = (nWideband * s_rAnalog) * s_gVTeensy * (s_gR1 + s_gR2) / s_gR2;
+	float gV = (nWideband * s_rAnalog) * s_gVTeensy;
 	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) * s_rCorrection + s_gAfrMin;
 
 	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
