@@ -336,7 +336,7 @@ inline void Trace(bool f, float g, int cDigit = 2)
 #if DEBUG
 void TraceHex(bool f, const u8 * aB, u16 cB)
 {
-	if (!f)
+	if (!f || cB == 0)
 		return;
 
 	int iB = 0;
@@ -1365,21 +1365,71 @@ bool CTactrix::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_LoadGPerRev] = GParam(PARAM_Maf) * 60.0f / max(GParam(PARAM_Rpm), 1.0f);
 	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
 
-	// Update wideband AFR (from analog reading)
+	// Update wideband AFR (serial connection). Innovate LC-2 use LC-1/"new AFR" sub-packets described here:
+	//  https://www.innovatemotorsports.com/support/downloads/Seriallog-2.pdf and
+	//  https://www.innovatemotorsports.com/support/manual/OT-2%20SDK.pdf
 
-	static const int s_nPortWideband = A21;
-	static const float s_gVWideband = 3.0f;
-	static const float s_gVTeensy = 3.3f;
-	static const float s_gLambdaOne = 14.7f;
-	static const float s_gAfrMin = 0.612f * s_gLambdaOne;
-	static const float s_gAfrMax = 1.225f * s_gLambdaOne;
-	static const float s_rCorrection = 1.0f;
+	static const int s_cBAfrPacket = 6;
+	static const int s_cBAfrPacketHeader = 2;
+	static const int s_cBAfrPayload = s_cBAfrPacket - s_cBAfrPacketHeader;
+	while (Serial5.available() >= s_cBAfrPacket)
+	{
+		// Look for start byte
 
-	int nWideband = analogRead(s_nPortWideband);
-	float gV = (nWideband * s_rAnalog) * s_gVTeensy;
-	float gAfr = (gV / s_gVWideband) * (s_gAfrMax - s_gAfrMin) * s_rCorrection + s_gAfrMin;
+		int cBPayload = 0;
+		bool fDataPacket = false;
 
-	m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
+		u8 bHdr0 = Serial5.read();
+		if ((bHdr0 & 0xA2) == 0xA2)
+		{
+			u8 bHdr1 = Serial5.peek();
+			if ((bHdr1 & 0x80) == 0x80)
+			{
+				(void) Serial5.read();
+
+				// Header specifies payload size in 16-bit words
+
+				cBPayload = (((bHdr0 & 0x1) << 7) | (bHdr1 & 0x7F)) * 2;
+				fDataPacket = (bHdr0 & 0x10);
+			}
+		}
+
+		if (fDataPacket && cBPayload == s_cBAfrPayload && Serial5.available() >= s_cBAfrPayload)
+		{
+			CASSERT(s_cBAfrPayload == 4);
+			u8 bPayload0 = Serial5.read();
+			u8 bPayload1 = Serial5.read();
+			u8 bPayload2 = Serial5.read();
+			u8 bPayload3 = Serial5.read();
+
+			if ((bPayload0 & 0xE0) == 0x40)
+			{
+				// AFR payload
+
+				bool fReady = (bPayload0 & 0x1C) == 0;
+
+				if (fReady)
+				{
+					u32 nAfr = ((bPayload0 & 0x1) << 7) | (bPayload1 & 0x7F);
+					u32 nLambda = ((bPayload2 & 0x3F) << 7) | (bPayload3 & 0x7F);
+					float gAfr = float((nLambda + 500) * nAfr) / 10000.0f;
+					m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
+				}
+				else
+				{
+					m_mpParamGValue[PARAM_WidebandAfr] = 0.0f;
+				}
+			}
+		}
+		else if (cBPayload > 0)
+		{
+			// Discard payload
+
+			cBPayload = min(cBPayload, Serial5.available());
+			for (int iBPacket = 0; iBPacket < cBPayload; ++iBPacket)
+				(void) Serial5.read();
+		}
+	}
 
 #if !TEST_OFFLINE
 	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
@@ -1801,11 +1851,26 @@ void setup()
 		(void) 0; // wait for Arduino Serial Monitor
 #endif // DEBUG
 
-	Serial.println("\n\nBoostino 0.1  Copyright (C) 2019, 2020  Jasmin Patry\n");
-	Serial.println("This program comes with ABSOLUTELY NO WARRANTY.\n");
-    Serial.println("This is free software, and you are welcome to redistribute it\n");
-    Serial.println("under certain conditions. For details see\n");
-	Serial.println("https://github.com/jasminpatry/boostino/blob/master/COPYING\n\n");
+	Serial.print("\n\nBoostino 0.1  Copyright (C) 2019, 2020  Jasmin Patry\n");
+	Serial.print("This program comes with ABSOLUTELY NO WARRANTY.\n");
+    Serial.print("This is free software, and you are welcome to redistribute it\n");
+    Serial.print("under certain conditions. For details see\n");
+	Serial.print("https://github.com/jasminpatry/boostino/blob/master/COPYING\n\n");
+
+	// Initialize Serial5 (for reading AFR). Innovate LC-2 outputs 0-5V RS-232 serial; using a voltage divider (2.2K and
+	//	3.3K) to step down to 0-3V, and specifying RXINV since TTL and RS-232 serial are inverted. TX is unused and
+	//	unconnected.
+
+	Trace(true, "Initialize Serial5\n");
+	Serial5.begin(19200, SERIAL_8N1_RXINV_TXINV);
+
+	while (!Serial5)
+	{
+		Trace(true, "Waiting for Serial5\n");
+		delay(1000);
+	}
+
+	Trace(true, "Serial5 initialized\n");
 
 	// Initialize OLED
 
@@ -2222,18 +2287,9 @@ void loop()
 
 				float gAfr = g_tactrix.GParam(PARAM_WidebandAfr);
 
-				// Filter values since raw values are noisy
-
-				static float s_gAfrPrev = 14.7;
-				static float s_uAfrFilter = 0.8f;
-
-				gAfr = s_uAfrFilter * s_gAfrPrev + (1.0f - s_uAfrFilter) * gAfr;
-
 				// Clamp at 19.9 because we don't have room for 2x.x
 
 				gAfr = min(19.9f, gAfr);
-
-				s_gAfrPrev = gAfr;
 
 				int cCh = snprintf(aChz, DIM(aChz), "%.1f", gAfr);
 
@@ -2353,16 +2409,6 @@ void loop()
 	}
 	else
 	{
-		if (Serial.available())
-		{
-			while (Serial.available())
-			{
-				int ch = Serial.read();
-				Serial.write(ch);
-				g_userial.write(ch);
-			}
-		}
-
 		if (g_userial.available())
 		{
 			Serial.print("Unhandled serial data: ");
