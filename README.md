@@ -26,6 +26,8 @@ This project was built using the following hardware:
 
 * [Teensy 3.6](https://www.pjrc.com/store/teensy36.html)
 * [Tactrix OpenPort 2.0](https://www.tactrix.com/index.php?option=com_virtuemart&page=shop.product_details&product_id=17&vmcchk=1&Itemid=53&redirected=1&Itemid=53)
+* [Innovate Motorsports (3877) LC-2 Digital Wideband Lambda Controller Kit with Bosch LSU 4.9 O2 Sensor](https://www.amazon.com/Innovate-Motorsports-Digital-Wideband-Controller/dp/B00FFTAJPC/) (optional; only necessary for AFR display and logging)
+* [Molex Micro-Fit 3.0 plug](https://www.amazon.com/gp/product/B078Q798L9/) for connecting to the LC-2 serial output (optional; only necessary for AFR display and logging)
 * [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
 * [Elcoho 10 Pieces Plastic Waterproof Boxes Junction Case Compatible with Electronic Project 3.94 × 2.36 × 0.98 Inches, Black](https://www.amazon.com/gp/product/B07G8S6XLV/)
 * Protoboard; I used a board from [this set](https://www.amazon.com/gp/product/B074X2GDH2), trimmed to fit, but any protoboard should work fine.
