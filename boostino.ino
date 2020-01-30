@@ -21,6 +21,8 @@
 #include <USBHost_t36.h>
 #include <XPT2046_Touchscreen.h>
 
+#include <float.h>
+
 #include "gaugeBg.h"
 #include "gaugeFg.h"
 #include "labelMph.h"
@@ -1406,18 +1408,37 @@ bool CTactrix::FTryUpdatePolling()
 			{
 				// AFR payload
 
-				bool fReady = (bPayload0 & 0x1C) == 0;
+				u8 bFunction = (bPayload0 & 0x1C) >> 2;
+				bool fReady = (bFunction == 0x0);
+				bool fHighO2 = (bFunction == 0x1);
+				bool fWarmup = (bFunction == 0x4);
+
+				u32 nLambda = ((bPayload2 & 0x3F) << 7) | (bPayload3 & 0x7F);
 
 				if (fReady)
 				{
 					u32 nAfr = ((bPayload0 & 0x1) << 7) | (bPayload1 & 0x7F);
-					u32 nLambda = ((bPayload2 & 0x3F) << 7) | (bPayload3 & 0x7F);
 					float gAfr = float((nLambda + 500) * nAfr) / 10000.0f;
 					m_mpParamGValue[PARAM_WidebandAfr] = gAfr;
 				}
+				else if (fHighO2)
+				{
+					m_mpParamGValue[PARAM_WidebandAfr] = FLT_MAX;
+				}
+				else if (fWarmup)
+				{
+					// Warmup counts up from 1.0 to 4.x
+					// BB (jasminp) Docs say nLambda is temperature in 1/10% of operating temperature. This doesn't
+					//	appear to be accurate; I'm seeing values from 0 to ~180.
+
+					float gWarmup = nLambda / 50.0f;
+					m_mpParamGValue[PARAM_WidebandAfr] = 1.0f + gWarmup;
+				}
 				else
 				{
-					m_mpParamGValue[PARAM_WidebandAfr] = 0.0f;
+					// Display unexpected function code as 0.<function code>
+
+					m_mpParamGValue[PARAM_WidebandAfr] = bFunction / 10.0f;
 				}
 			}
 		}
