@@ -21,8 +21,6 @@
 #include <USBHost_t36.h>
 #include <XPT2046_Touchscreen.h>
 
-#include <float.h>
-
 #include "gaugeBg.h"
 #include "gaugeFg.h"
 #include "labelMph.h"
@@ -93,6 +91,7 @@ enum PARAM
 	PARAM_WidebandAfr,	// Read from analog input
 	PARAM_TargetAfr,
 	PARAM_MafVoltage,
+	PARAM_LightSwitch,
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -124,6 +123,7 @@ static const char * s_mpParamPChz[] =
 	"Wideband A/F Sensor",								// PARAM_WidebandAfr
 	"Final Fueling Base (2-byte)* (estimated AFR)",		// PARAM_TargetAfr
 	"Mass Airflow Sensor Voltage (V)",					// PARAM_MafVoltage
+	"Light Switch",										// PARAM_LightSwitch
 };
 CASSERT(DIM(s_mpParamPChz) == PARAM_Max);
 
@@ -147,6 +147,7 @@ static const u32 s_mpParamABAddr[] =
 	0x000000,		// PARAM_WidebandAfr
 	0xff688a,		// PARAM_TargetAfr
 	0x00001d,		// PARAM_MafVoltage
+	0x000064,		// PARAM_LightSwitch
 };
 CASSERT(DIM(s_mpParamABAddr) == PARAM_Max);
 
@@ -169,6 +170,7 @@ static const u8 s_mpParamCB[] =
 	 0,		// PARAM_WidebandAfr
 	 2,		// PARAM_TargetAfr
 	 1,		// PARAM_MafVoltage
+	 1,		// PARAM_LightSwitch
 };
 CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
@@ -201,17 +203,18 @@ CASSERT(DIM(s_mpParamCB) == PARAM_Max);
 
 static const PARAM s_aParamPoll[] =
 {
-	PARAM_FbkcDeg,
-	PARAM_Rpm,
-	PARAM_Maf,
-	PARAM_FlkcDeg,
-	PARAM_Iam,
-	PARAM_BoostPsi,
-	PARAM_IatF,
-	PARAM_ThrottlePct,
-	PARAM_SpeedMph,
-	PARAM_TargetAfr,
-	PARAM_MafVoltage,
+	PARAM_FbkcDeg,		// 4 B
+	PARAM_Rpm,			// 2 B
+	PARAM_Maf,			// 2 B
+	PARAM_FlkcDeg,		// 1 B
+	PARAM_Iam,			// 1 B
+	PARAM_BoostPsi,		// 1 B
+	PARAM_IatF,			// 1 B
+	PARAM_ThrottlePct,	// 1 B
+	PARAM_SpeedMph,		// 1 B
+	PARAM_TargetAfr,	// 2 B
+	PARAM_MafVoltage,	// 1 B
+	PARAM_LightSwitch,	// 1 B
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -1360,6 +1363,8 @@ bool CTactrix::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_Maf] = 50.0f;
 
 	m_mpParamGValue[PARAM_Rpm] = 2500.0f;
+
+	m_mpParamGValue[PARAM_LightSwitch] = ((msCur & 0x1fff) < 0x1000);
 #endif // TEST_OFFLINE
 
 	// Update calculated params
@@ -1423,12 +1428,15 @@ bool CTactrix::FTryUpdatePolling()
 				}
 				else if (fHighO2)
 				{
-					m_mpParamGValue[PARAM_WidebandAfr] = FLT_MAX;
+					// NOTE (jpatry) Max valid AFR I've seen is ~116.
+
+					static const float s_gAfrMax = 1000.0f;
+					m_mpParamGValue[PARAM_WidebandAfr] = s_gAfrMax;
 				}
 				else if (fWarmup)
 				{
 					// Warmup counts up from 1.0 to 4.x
-					// BB (jasminp) Docs say nLambda is temperature in 1/10% of operating temperature. This doesn't
+					// BB (jpatry) Docs say nLambda is temperature in 1/10% of operating temperature. This doesn't
 					//	appear to be accurate; I'm seeing values from 0 to ~180.
 
 					float gWarmup = nLambda / 50.0f;
@@ -1540,8 +1548,12 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) * (1.0f / 50.0f);
 		break;
 
+	case PARAM_LightSwitch:
+		ng.m_g = (nValue & 0x8) ? 1.0f : 0.0f;
+		break;
+
 	default:
-		CASSERT(PARAM_MafVoltage == PARAM_Max - 1); // Compile-time reminder to add new params to switch
+		CASSERT(PARAM_LightSwitch == PARAM_Max - 1); // Compile-time reminder to add new params to switch
 		ASSERT(false);
 	}
 
@@ -1605,6 +1617,7 @@ static const int s_dXScreen = 320;
 static const int s_dYScreen = 240;
 static const int s_nPinTftCs = 10;
 static const int s_nPinTftDc = 9;
+static const int s_nPinTftLedPwm = 36;
 static const u32 s_msLogAfterEvent = 5000;	// how long to log after an event
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
@@ -1867,6 +1880,8 @@ void UpdateLog()
 
 void setup()
 {
+	analogWrite(s_nPinTftLedPwm, 255);
+
 #if DEBUG
 	while (!Serial && (millis() < 5000))
 		(void) 0; // wait for Arduino Serial Monitor
@@ -2095,6 +2110,10 @@ void loop()
 			// Update data, handle touch events, draw gauge and log if necessary
 
 			g_pCnvs->fillScreen(s_iColorBlack);
+
+			// Update screen brightness based on headlights on/off
+
+			analogWrite(s_nPinTftLedPwm, (g_tactrix.GParam(PARAM_LightSwitch)) ? 32 : 255);
 
 			static float s_gBoostMax = -1000.0f;
 
