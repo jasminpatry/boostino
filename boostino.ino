@@ -30,14 +30,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 0
+#define DEBUG 1
 
 static const bool s_fTraceComms = false;
 static const bool s_fTraceTouch = false;
 
 // Set to 1 to test without Tactrix
 
-#define TEST_NO_TACTRIX 0
+#define TEST_NO_TACTRIX 1
 
 // Set to 1 to test Tactrix without being plugged into the vehicle
 
@@ -1618,6 +1618,8 @@ static const int s_dYScreen = 240;
 static const int s_nPinTftCs = 10;
 static const int s_nPinTftDc = 9;
 static const int s_nPinTftLedPwm = 36;
+static const float s_uScreenBrightnessHigh = 1.0f;
+static const float s_uScreenBrightnessLow = 0.19f;
 static const u32 s_msLogAfterEvent = 5000;	// how long to log after an event
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
@@ -1788,6 +1790,74 @@ void DrawAbIntoCanvas(const u8 * aB, const u16 (&aNBb)[4])
 
 
 
+class CClock	// tag = clock
+{
+public:
+			CClock()
+			: m_eus(0),
+			  m_dT(0.0f)
+				{ ; }
+
+	void	Reset()
+				{
+					m_eus = 0;
+					m_dT = 0.0f;
+				}
+
+	void	Update();
+
+	float	DT() const
+				{ return m_dT; }
+
+protected:
+	elapsedMicros	m_eus;
+	float			m_dT;
+};
+
+void CClock::Update()
+{
+	u32 nMicros = m_eus;
+	m_eus = 0;
+	m_dT = nMicros * 1.0e-6f;
+}
+
+CClock g_clock;
+
+
+
+class CScreenFader	// tag = scrnfdr
+{
+public:
+			CScreenFader()
+			: m_uTgt(0.0f),
+			  m_uCur(0.0f)
+				{ ; }
+
+	void	Update();
+
+	void	SetTarget(float u)
+				{ m_uTgt = u; }
+
+protected:
+	float	m_uTgt;
+	float	m_uCur;
+};
+
+void CScreenFader::Update()
+{
+	static const float s_dTEma = 0.33f;
+
+	float uLerp = min(1.0f, g_clock.DT() / s_dTEma);
+
+	m_uCur = uLerp * m_uTgt + (1.0f - uLerp) * m_uCur;
+
+	analogWrite(s_nPinTftLedPwm, roundf(m_uCur * 255.0f));
+}
+
+CScreenFader g_scrnfdr;
+
+
+
 // SD Card Configuration
 
 static const int s_nPinSdChipSelect = BUILTIN_SDCARD;
@@ -1880,7 +1950,9 @@ void UpdateLog()
 
 void setup()
 {
-	analogWrite(s_nPinTftLedPwm, 255);
+	// Turn screen LED off
+
+	g_scrnfdr.Update();
 
 #if DEBUG
 	while (!Serial && (millis() < 5000))
@@ -1978,6 +2050,12 @@ void setup()
 	// Teensy has 13-bit ADC (defaults to 10-bit to be Arduino-compatible)
 
 	analogReadResolution(s_cBitAnalog);
+
+	g_clock.Reset();
+
+	// Start fading in screen LED
+
+	g_scrnfdr.SetTarget(s_uScreenBrightnessLow);
 }
 
 
@@ -1986,6 +2064,8 @@ void setup()
 
 void loop()
 {
+	g_clock.Update();
+
 	// Update USB
 
 	g_uhost.Task();
@@ -2113,7 +2193,7 @@ void loop()
 
 			// Update screen brightness based on headlights on/off
 
-			analogWrite(s_nPinTftLedPwm, (g_tactrix.GParam(PARAM_LightSwitch)) ? 32 : 255);
+			g_scrnfdr.SetTarget((g_tactrix.GParam(PARAM_LightSwitch)) ? s_uScreenBrightnessLow : s_uScreenBrightnessHigh);
 
 			static float s_gBoostMax = -1000.0f;
 
@@ -2461,6 +2541,8 @@ void loop()
 	}
 
 	Serial.flush();
+
+	g_scrnfdr.Update();
 
 	UpdateTft();
 }
