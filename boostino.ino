@@ -30,14 +30,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = false;
 static const bool s_fTraceTouch = false;
 
 // Set to 1 to test without Tactrix
 
-#define TEST_NO_TACTRIX 1
+#define TEST_NO_TACTRIX 0
 
 // Set to 1 to test Tactrix without being plugged into the vehicle
 
@@ -1829,18 +1829,21 @@ class CScreenFader	// tag = scrnfdr
 {
 public:
 			CScreenFader()
-			: m_uTgt(0.0f),
-			  m_uCur(0.0f)
+			: m_gLogTgt(s_gLogMin),
+			  m_gLogCur(s_gLogMin)
 				{ ; }
 
 	void	Update();
 
 	void	SetTarget(float u)
-				{ m_uTgt = u; }
+				{ m_gLogTgt = logf(max(s_uMin, u)); }
 
 protected:
-	float	m_uTgt;
-	float	m_uCur;
+	static constexpr float s_uMin = 1e-3f;
+	static constexpr float s_gLogMin = logf(s_uMin);
+
+	float	m_gLogTgt;
+	float	m_gLogCur;
 };
 
 void CScreenFader::Update()
@@ -1849,9 +1852,9 @@ void CScreenFader::Update()
 
 	float uLerp = min(1.0f, g_clock.DT() / s_dTEma);
 
-	m_uCur = uLerp * m_uTgt + (1.0f - uLerp) * m_uCur;
+	m_gLogCur = uLerp * m_gLogTgt + (1.0f - uLerp) * m_gLogCur;
 
-	analogWrite(s_nPinTftLedPwm, roundf(m_uCur * 255.0f));
+	analogWrite(s_nPinTftLedPwm, roundf(expf(m_gLogCur) * 255.0f));
 }
 
 CScreenFader g_scrnfdr;
