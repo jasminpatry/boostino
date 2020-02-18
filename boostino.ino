@@ -86,12 +86,12 @@ enum PARAM
 	PARAM_ThrottlePct,
 	PARAM_SpeedMph,
 	PARAM_IpwMs,
-	PARAM_IdcPct,		// NOTE (jpatry) calculated from PARAM_Rpm and PARAM_IpwMs
+	PARAM_IdcPct,		// NOTE (jpatry) Calculated from PARAM_Rpm and PARAM_IpwMs
 	PARAM_Afr1,
 	PARAM_WidebandAfr,	// Read from analog input
 	PARAM_TargetAfr,
 	PARAM_MafVoltage,
-	PARAM_LightSwitch,
+	PARAM_LightSwitch,	// BB (jpatry) Always 1 unless parking brake is up, so not useful.
 
 	PARAM_Max,
 	PARAM_Min = 0,
@@ -214,7 +214,6 @@ static const PARAM s_aParamPoll[] =
 	PARAM_SpeedMph,		// 1 B
 	PARAM_TargetAfr,	// 2 B
 	PARAM_MafVoltage,	// 1 B
-	PARAM_LightSwitch,	// 1 B
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -1363,8 +1362,6 @@ bool CTactrix::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_Maf] = 50.0f;
 
 	m_mpParamGValue[PARAM_Rpm] = 2500.0f;
-
-	m_mpParamGValue[PARAM_LightSwitch] = ((msCur & 0x1fff) < 0x1000);
 #endif // TEST_OFFLINE
 
 	// Update calculated params
@@ -2154,6 +2151,16 @@ void loop()
 		}
 	}
 
+	// Check for screen brightness inputs
+
+	if (fTouchRelease && abs(g_xTouch - 160) <= 30)
+	{
+		if (abs(g_yTouch - 30) <= 30)
+			g_scrnfdr.SetTarget(s_uScreenBrightnessHigh);
+		else if (abs(g_yTouch - 210) <= 30)
+			g_scrnfdr.SetTarget(s_uScreenBrightnessLow);
+	}
+
 #if !TEST_NO_TACTRIX
 	if (!g_fUserialActive)
 	{
@@ -2193,10 +2200,6 @@ void loop()
 			// Update data, handle touch events, draw gauge and log if necessary
 
 			g_pCnvs->fillScreen(s_iColorBlack);
-
-			// Update screen brightness based on headlights on/off
-
-			g_scrnfdr.SetTarget((g_tactrix.GParam(PARAM_LightSwitch)) ? s_uScreenBrightnessLow : s_uScreenBrightnessHigh);
 
 			static float s_gBoostMax = -1000.0f;
 
