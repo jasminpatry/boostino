@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <Adafruit_GFX.h>
+#include <EEPROM.h>
 #include <font_Exo-BoldItalic.h>
 #include <ILI9341_t3.h>
 #include <SD.h>
@@ -76,7 +77,9 @@ enum PARAM
 {
 	PARAM_FbkcDeg,
 	PARAM_FlkcDeg,
-	PARAM_BoostPsi,
+	PARAM_AtmPres,
+	PARAM_ManifAbsPres,
+	PARAM_BoostPsi,		// NOTE (jpatry) Calculated from PARAM_ManifAbsPres and PARAM_AtmPres
 	PARAM_Iam,
 	PARAM_CoolantTempF,	// BB (jpatry) Currently unused
 	PARAM_Rpm,
@@ -108,6 +111,8 @@ static const char * s_mpParamPChz[] =
 {
 	"Feedback Knock Correction (4-byte)* (degrees)",	// PARAM_FbkcDeg
 	"Fine Learning Knock Correction (degrees)",			// PARAM_FlkcDeg
+	"Atmospheric Pressure (psi)",						// PARAM_AtmPres
+	"Manifold Absolute Pressure (psi)",					// PARAM_ManifAbsPres
 	"Manifold Relative Pressure (psi)",					// PARAM_BoostPsi
 	"IAM (multiplier)",									// PARAM_Iam
 	"Coolant Temperature (F)",							// PARAM_CoolantTempF
@@ -132,7 +137,9 @@ static const u32 s_mpParamABAddr[] =
 {
 	0xff81fc,		// PARAM_FbkcDeg
 	0x000199,		// PARAM_FlkcDeg
-	0x000024,		// PARAM_BoostPsi
+	0x000023,		// PARAM_AtmPres
+	0x00000D,		// PARAM_ManifAbsPres
+	0x000000,		// PARAM_BoostPsi
 	0x0000f9,		// PARAM_Iam
 	0x000008,		// PARAM_CoolantTempF
 	0x00000e,		// PARAM_Rpm
@@ -155,7 +162,9 @@ static const u8 s_mpParamCB[] =
 {
 	 4,		// PARAM_FbkcDeg
 	 1,		// PARAM_FlkcDeg
-	 1,		// PARAM_BoostPsi
+	 1,		// PARAM_AtmPres
+	 1,		// PARAM_ManifAbsPres
+	 0,		// PARAM_BoostPsi
 	 1,		// PARAM_Iam
 	 1,		// PARAM_CoolantTempF
 	 2,		// PARAM_Rpm
@@ -205,15 +214,15 @@ static const PARAM s_aParamPoll[] =
 {
 	PARAM_FbkcDeg,		// 4 B
 	PARAM_Rpm,			// 2 B
+	PARAM_ManifAbsPres,	// 1 B
+	PARAM_AtmPres,		// 1 B
 	PARAM_Maf,			// 2 B
 	PARAM_FlkcDeg,		// 1 B
 	PARAM_Iam,			// 1 B
-	PARAM_BoostPsi,		// 1 B
 	PARAM_IatF,			// 1 B
 	PARAM_ThrottlePct,	// 1 B
 	PARAM_SpeedMph,		// 1 B
 	PARAM_TargetAfr,	// 2 B
-	PARAM_MafVoltage,	// 1 B
 };
 static const u8 s_cParamPoll = DIM(s_aParamPoll);
 
@@ -234,7 +243,6 @@ static const PARAM s_aParamLog[] =
 	PARAM_Iam,
 	PARAM_WidebandAfr,
 	PARAM_TargetAfr,
-	PARAM_MafVoltage,
 };
 static const u8 s_cParamLog = DIM(s_aParamLog);
 
@@ -1342,9 +1350,10 @@ bool CTactrix::FTryUpdatePolling()
 	}
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
+	m_mpParamGValue[PARAM_AtmPres] = 14.7f;
 
 	float gBoost = -10.0f + 30.0f * (-sinf(msCur / 1000.0f) * 0.5f + 0.5f);
-	m_mpParamGValue[PARAM_BoostPsi] = gBoost;
+	m_mpParamGValue[PARAM_ManifAbsPres] = gBoost + m_mpParamGValue[PARAM_AtmPres];
 
 	float uIam = ((msCur & 0x1fff) - 0x1e0 < 0x100) ? 0.93f : 1.0f;
 	m_mpParamGValue[PARAM_Iam] = uIam;
@@ -1366,6 +1375,7 @@ bool CTactrix::FTryUpdatePolling()
 
 	// Update calculated params
 
+	m_mpParamGValue[PARAM_BoostPsi] = m_mpParamGValue[PARAM_ManifAbsPres] - m_mpParamGValue[PARAM_AtmPres];
 	m_mpParamGValue[PARAM_LoadGPerRev] = GParam(PARAM_Maf) * 60.0f / max(GParam(PARAM_Rpm), 1.0f);
 	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
 
@@ -1504,8 +1514,9 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 		ng.m_g = float(nValue) / 16.0f;
 		break;
 
-	case PARAM_BoostPsi:
-		ng.m_g = 0.145098039216f * float(nValue) - 18.5725490196f; // (x-128)*37/255
+	case PARAM_AtmPres:
+	case PARAM_ManifAbsPres:
+		ng.m_g = float(nValue) * 37.0f / 255.0f;
 		break;
 
 	case PARAM_CoolantTempF:
@@ -1615,8 +1626,6 @@ static const int s_dYScreen = 240;
 static const int s_nPinTftCs = 10;
 static const int s_nPinTftDc = 9;
 static const int s_nPinTftLedPwm = 36;
-static const float s_uScreenBrightnessHigh = 1.0f;
-static const float s_uScreenBrightnessLow = 0.19f;
 static const u32 s_msLogAfterEvent = 5000;	// how long to log after an event
 
 ILI9341_t3 g_tft = ILI9341_t3(s_nPinTftCs, s_nPinTftDc);
@@ -1822,30 +1831,52 @@ CClock g_clock;
 
 
 
+enum BRIGHT : s8
+{
+	BRIGHT_Off,
+	BRIGHT_Low,
+	BRIGHT_High,
+
+	BRIGHT_Max,
+	BRIGHT_Min = 0,
+	BRIGHT_Nil = -1,
+};
+
+static const float s_mpBrightGLogBrightness[] =
+{
+	-6.91f,	// BRIGHT_Off
+	-1.66f,	// BRIGHT_Low
+	0.0f,	// BRIGHT_High
+};
+CASSERT(DIM(s_mpBrightGLogBrightness) == BRIGHT_Max);
+
 class CScreenFader	// tag = scrnfdr
 {
 public:
 			CScreenFader()
-			: m_gLogTgt(s_gLogMin),
-			  m_gLogCur(s_gLogMin)
+			: m_gLogTgt(s_mpBrightGLogBrightness[BRIGHT_Off]),
+			  m_gLogCur(s_mpBrightGLogBrightness[BRIGHT_Off])
 				{ ; }
 
 	void	Update();
 
-	void	SetTarget(float u)
-				{ m_gLogTgt = logf(max(s_uMin, u)); }
+	void	SetBrightnessTarget(BRIGHT bright)
+				{ m_gLogTgt = s_mpBrightGLogBrightness[bright]; }
+
+	void	SetBrightness(BRIGHT bright)
+				{
+					SetBrightnessTarget(bright);
+					m_gLogCur = m_gLogTgt;
+				}
 
 protected:
-	static constexpr float s_uMin = 1e-3f;
-	static constexpr float s_gLogMin = logf(s_uMin);
-
 	float	m_gLogTgt;
 	float	m_gLogCur;
 };
 
 void CScreenFader::Update()
 {
-	static const float s_dTEma = 0.33f;
+	static const float s_dTEma = 0.2f;
 
 	float uLerp = min(1.0f, g_clock.DT() / s_dTEma);
 
@@ -1943,6 +1974,86 @@ void UpdateLog()
 		s_fileLog.println();
 	}
 }
+
+
+
+// Persisted settings
+
+static const u32 s_nNvramMagic = 'BSTI';
+
+enum NVRAMVER : u8
+{
+	NVRAMVER_Initial = 1,
+
+	NVRAMVER_Max,
+	NVRAMVER_Current = NVRAMVER_Max - 1,
+};
+
+struct SNvram	// tag = nvram
+{
+				SNvram()
+				: m_nvramver(NVRAMVER_Current),
+				  m_bright(BRIGHT_Low),
+				  m_fDisplayMph(false)
+					{ ; }
+
+	void		Read();
+	void		Write();
+
+	NVRAMVER	m_nvramver;
+	BRIGHT		m_bright;
+	bool		m_fDisplayMph;
+};
+
+void SNvram::Read()
+{
+	union
+	{
+		u32 m_nMagic;
+		u8	m_aB[4];
+	} u;
+
+	for (int iB = 0; iB < sizeof(u32); ++iB)
+	{
+		u.m_aB[iB] = EEPROM.read(iB);
+	}
+
+	if (u.m_nMagic != s_nNvramMagic)
+	{
+		*this = SNvram();
+		return;
+	}
+
+	u8 * aB = reinterpret_cast<u8 *>(this);
+	for (int iB = 0; iB < sizeof(*this); ++iB)
+	{
+		aB[iB] = EEPROM.read(sizeof(u32) + iB);
+	}
+}
+
+void SNvram::Write()
+{
+	union
+	{
+		u32 m_nMagic;
+		u8	m_aB[4];
+	} u;
+
+	u.m_nMagic = s_nNvramMagic;
+
+	for (int iB = 0; iB < sizeof(u32); ++iB)
+	{
+		EEPROM.update(iB, u.m_aB[iB]);
+	}
+
+	u8 * aB = reinterpret_cast<u8 *>(this);
+	for (int iB = 0; iB < sizeof(*this); ++iB)
+	{
+		EEPROM.update(sizeof(u32) + iB, aB[iB]);
+	}
+}
+
+SNvram g_nvram;
 
 
 
@@ -2053,9 +2164,13 @@ void setup()
 
 	g_clock.Reset();
 
+	// Read NVRAM
+
+	g_nvram.Read();
+
 	// Start fading in screen LED
 
-	g_scrnfdr.SetTarget(s_uScreenBrightnessLow);
+	g_scrnfdr.SetBrightnessTarget(g_nvram.m_bright);
 }
 
 
@@ -2156,9 +2271,23 @@ void loop()
 	if (fTouchRelease && abs(g_xTouch - 160) <= 30)
 	{
 		if (abs(g_yTouch - 30) <= 30)
-			g_scrnfdr.SetTarget(s_uScreenBrightnessHigh);
+		{
+			if (g_nvram.m_bright != BRIGHT_High)
+			{
+				g_scrnfdr.SetBrightnessTarget(BRIGHT_High);
+				g_nvram.m_bright = BRIGHT_High;
+				g_nvram.Write();
+			}
+		}
 		else if (abs(g_yTouch - 210) <= 30)
-			g_scrnfdr.SetTarget(s_uScreenBrightnessLow);
+		{
+			if (g_nvram.m_bright != BRIGHT_Low)
+			{
+				g_scrnfdr.SetBrightnessTarget(BRIGHT_Low);
+				g_nvram.m_bright = BRIGHT_Low;
+				g_nvram.Write();
+			}
+		}
 	}
 
 #if !TEST_NO_TACTRIX
@@ -2227,9 +2356,10 @@ void loop()
 				s_cFbkcEvent = 0;
 			}
 
-			static bool s_fDrawMph = false;
 			if (fTouchRelease && g_xTouch <= 100 && g_yTouch <= 40)
-				s_fDrawMph = !s_fDrawMph;
+			{
+				g_nvram.m_fDisplayMph = !g_nvram.m_fDisplayMph;
+			}
 
 			// Check if we have a new FBKC event (ignore small, low-load events for display, but still log them)
 
@@ -2374,7 +2504,7 @@ void loop()
 
 			// Draw MPH/AFR label
 
-			if (s_fDrawMph)
+			if (g_nvram.m_fDisplayMph)
 				DrawAbIntoCanvas(&g_aBLabelMph[0], g_aNBbLabelMph);
 			else
 				DrawAbIntoCanvas(&g_aBLabelAfr[0], g_aNBbLabelAfr);
@@ -2399,7 +2529,7 @@ void loop()
 				}
 			}
 
-			if (s_fDrawMph)
+			if (g_nvram.m_fDisplayMph)
 			{
 				// Draw speed
 
