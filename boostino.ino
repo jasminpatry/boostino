@@ -1,4 +1,4 @@
-// Boostino -- A Teensy 3.6/Tactrix OP 2.0 logger and gauge.
+// Boostino -- A Teensy 3.6 SSM logger and gauge.
 // Copyright (c) 2019, 2020 Jasmin Patry
 //
 // This program is free software: you can redistribute it and/or modify
@@ -19,7 +19,6 @@
 #include <font_Exo-BoldItalic.h>
 #include <ILI9341_t3.h>
 #include <SD.h>
-#include <USBHost_t36.h>
 #include <XPT2046_Touchscreen.h>
 
 #include "gaugeBg.h"
@@ -31,18 +30,14 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 0
+#define DEBUG 1
 
-static const bool s_fTraceComms = false;
+static const bool s_fTraceComms = true;
 static const bool s_fTraceTouch = false;
 
-// Set to 1 to test without Tactrix
+// Set to 1 to test without being plugged into the vehicle
 
-#define TEST_NO_TACTRIX 0
-
-// Set to 1 to test Tactrix without being plugged into the vehicle
-
-#define TEST_OFFLINE (0 || TEST_NO_TACTRIX)
+#define TEST_OFFLINE 0
 
 
 
@@ -346,6 +341,23 @@ inline void Trace(bool f, float g, int cDigit = 2)
 }
 
 #if DEBUG
+void TraceHex(bool f, u8 b)
+{
+	if (!f)
+		return;
+
+	if (b < 0x10)
+		Trace(true, '0');
+
+	Trace(true, b, HEX);
+}
+#else // !DEBUG
+inline void TraceHex(bool f, u8 b)
+{
+}
+#endif // !DEBUG
+
+#if DEBUG
 void TraceHex(bool f, const u8 * aB, u16 cB)
 {
 	if (!f || cB == 0)
@@ -355,9 +367,7 @@ void TraceHex(bool f, const u8 * aB, u16 cB)
 	for (;;)
 	{
 		u8 b = aB[iB];
-		if (b < 0x10)
-			Trace(true, '0');
-		Trace(true, b, HEX);
+		TraceHex(true, b);
 
 		++iB;
 		if (iB >= cB)
@@ -401,79 +411,6 @@ inline void TraceHex(bool f, const u8 * aB, u16 cB)
 
 
 
-// NOTE (jpatry) J2534 protocol reverse-engineered using Wireshark, with help from this reference:
-//	https://github.com/NikolaKozina/j2534/blob/master/j2534.c . This fork (by one of the RomRaider devs) looks to be
-//	more up to date: https://github.com/dschultzca/j2534/blob/master/j2534.c
-
-// J2534 Message kinds
-
-enum MSGK
-{
-	MSGK_InfoReply,			// "ari" reply to "ati"
-	MSGK_LoopbackStart,		// "ar" 0xa0 reply to "att"
-	MSGK_Loopback,			// "ar" 0x20 reply to "att"
-	MSGK_LoopbackEnd,		// "ar" 0x60 reply to "att"
-	MSGK_ReplyStart,		// "ar" 0x80 reply to "att"
-	MSGK_Reply,				// "ar" 0x00 reply to "att"
-	MSGK_ReplyEnd,			// "ar" 0x40 reply to "att"
-
-	MSGK_Max,
-	MSGK_Min = 0,
-	MSGK_Nil = -1
-};
-
-// BB (jpatry) why doesn't this work? Compiler says "MSGK does not name a type".
-// MSGK & operator++(MSGK & msgk)
-// {
-// 	msgk = MSGK(msgk + 1);
-// 	return msgk;
-// }
-
-static const char * s_mpMsgkPChz[] =
-{
-	"InfoReply",				// MSGK_InfoReply
-	"LoopbackStart",			// MSGK_LoopbackStart
-	"Loopback",					// MSGK_Loopback
-	"LoopbackEnd",				// MSGK_LoopbackEnd
-	"ReplyStart",				// MSGK_ReplyStart
-	"Reply",					// MSGK_Reply
-	"ReplyEnd",					// MSGK_ReplyEnd
-};
-CASSERT(DIM(s_mpMsgkPChz) == MSGK_Max);
-
-static const u8 s_mpMsgkBType[] =
-{
-	0xff,				// MSGK_InfoReply (no type byte)
-	0xa0,				// MSGK_LoopbackStart
-	0x20,				// MSGK_Loopback
-	0x60,				// MSGK_LoopbackEnd
-	0x80,				// MSGK_ReplyStart
-	0x00,				// MSGK_Reply
-	0x40,				// MSGK_ReplyEnd
-};
-CASSERT(DIM(s_mpMsgkBType) == MSGK_Max);
-
-
-
-// Structure of MSGK_LoopbackStart to MSGK_ReplyEnd inclusive
-
-struct SJ2534Ar	// tag = ar
-{
-	u8	m_aBHeader[2];			// "ar"
-	u8	m_nProtocol;			// E.g. '3' for ISO9141
-	u8	m_cBPlus1;				// length including m_bType
-	u8	m_bType;				// s_mpMsgkBType[msgk]
-	u8	m_aB[0];				// Payload
-
-	u8			CBPayload() const
-					{ return m_cBPlus1 - 1; }
-
-	const u8 *	PBPayload() const
-					{ return m_aB; }
-};
-
-
-
 // Subaru Select Monitor (SSM) protocol description: http://www.romraider.com/RomRaider/SsmProtocol
 // Max SSM packet size is ~250 bytes
 
@@ -496,13 +433,15 @@ enum SSMID : u8
 
 enum SSMCMD : u8
 {
-	SSMCMD_BlockReadRequest	   = 0xa0,
-	SSMCMD_AddressReadRequest  = 0xa8,
-	SSMCMD_AddressReadResponse = 0xe8,
-	SSMCMD_WriteBlockRequest   = 0xb0,
-	SSMCMD_AddressWriteRequest = 0xb8,
-	SSMCMD_EcuInitRequest	   = 0xbf,
-	SSMCMD_EcuInitResponse	   = 0xff,
+	SSMCMD_BlockReadRequest		= 0xa0,
+	SSMCMD_AddressReadRequest	= 0xa8,
+	SSMCMD_AddressReadResponse	= 0xe8,
+	SSMCMD_WriteBlockRequest	= 0xb0,
+	SSMCMD_AddressWriteRequest	= 0xb8,
+	SSMCMD_EcuInitRequest		= 0xbf,
+	SSMCMD_EcuInitResponse		= 0xff,
+
+	SSMCMD_Any					= 0x00,	// For use by FTryReceiveMessage, matches any command byte &&& remove
 };
 
 
@@ -518,6 +457,10 @@ u8 BSsmChecksum(const u8 * aB, u16 cB)
 
 
 
+static const u8 s_bSsmHdr = 0x80;
+
+
+
 // SSM Packet
 
 struct SSsm	// tag = ssm
@@ -529,23 +472,35 @@ struct SSsm	// tag = ssm
 	SSMCMD	m_bCmd;				// Command/response byte
 	u8		m_aB[0];			// Data (including checksum as last byte)
 
+	u8			CBPacket() const
+					{ return sizeof(*this) + m_cB; }
+
 	u8			CBData() const
 					{ return m_cB - 1; }
 
 	const u8 *	PBData() const
 					{ return m_aB; }
 
+	u8 *		PBChecksum()
+					{ return &m_aB[CBData()]; }
+
 	u8			BChecksum() const
 					{ return m_aB[CBData()]; }
 
+	u8			BComputeChecksum() const;
 	bool		FVerifyChecksum() const;
 };
 
-bool SSsm::FVerifyChecksum() const
+u8 SSsm::BComputeChecksum() const
 {
 	const u8 * aB = (const u8 *)this;
-	int cB = m_cB + 4;
-	u8 bChecksum = BSsmChecksum(aB, cB);
+	int cB = CBPacket() - 1;
+	return BSsmChecksum(aB, cB);
+}
+
+bool SSsm::FVerifyChecksum() const
+{
+	u8 bChecksum = BComputeChecksum();
 	if (bChecksum == BChecksum())
 	{
 		return true;
@@ -619,18 +574,6 @@ CLogHistory g_loghist;
 
 
 
-// USB host configuration
-
-USBHost g_uhost;
-USBSerial g_userial(g_uhost);
-bool g_fUserialActive = false;
-
-static const u16 s_nIdTactrix = 0x0403;
-static const u16 s_nIdOpenPort20 = 0xcc4c;
-static const u32 s_dMsTimeoutDefault = 2000;
-
-
-
 // Wideband analog input
 
 static const int s_cBitAnalog = 13;
@@ -638,86 +581,87 @@ static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
 
-// Tactrix State
+static const u32 s_dMsTimeoutDefault = 2000; // &&& make this smaller?
 
-enum TACTRIXS
+
+
+// Connection State
+
+enum CNXNS
 {
-	TACTRIXS_Disconnected,
-	TACTRIXS_Connected,
-	TACTRIXS_Polling,
+	CNXNS_Idle,
+	CNXNS_Polling,
 };
 
-class CTactrix
+class CConnectionMgr	// tag = cnxnmgr
 {
 public:
-					CTactrix()
-					: m_tactrixs(TACTRIXS_Disconnected),
-					  m_msPollingStart(0),
+					CConnectionMgr()
+					: m_cnxns(CNXNS_Idle),
+					  m_rcvs(RCVS_Waiting),
 					  m_aBRecv(),
 					  m_cBRecv(0),
-					  m_iBRecv(0),
-					  m_iBRecvPrev(0),
+					  m_msReceive(0),
 					  m_cBParamPoll(0),
 					  m_mpParamGValue()
 						{ ; }
 
-					~CTactrix()
+					~CConnectionMgr()
 						{ ; }
 
-	bool			FTryConnect();
 	void			Disconnect();
 	bool			FTryStartPolling();
 	bool			FTryUpdatePolling();
-	TACTRIXS		Tactrixs() const
-						{ return m_tactrixs; }
+	CNXNS			Cnxns() const
+						{ return m_cnxns; }
 	float			GParam(PARAM param) const;
 
 protected:
+
+	// Receive state
+
+	enum RCVS
+	{
+		RCVS_Waiting,
+		RCVS_Header,
+		RCVS_Data,
+		RCVS_Checksum,
+		RCVS_IncompleteMac,
+
+		RCVS_MessageReceived = RCVS_IncompleteMac,
+		RCVS_Error,
+
+		RCVS_Max,
+		RCVS_Min = 0,
+		RCVS_Nil = -1,
+
+	};
+
 	void			SendCommand(const u8 * aB, u16 cB);
-	void			SendCommand(const char * pChz);
+	void			SendCommand(const SSsm * pSsm);
 
-	int				CBReceive(u32 dMsTimeout);
 	void			ResetReceive();
-	bool			FTryReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
-	bool			FMustReceiveMessage(const char * pChz, u32 dMsTimeout = s_dMsTimeoutDefault);
-	int				CBMessage()
-						{ return m_iBRecv - m_iBRecvPrev; }
-	u8 *			PBMessage()
-						{ return &m_aBRecv[m_iBRecvPrev]; }
-	int				CBRemaining()
-						{ return m_cBRecv - m_iBRecv; }
-	u8 *			PBRemaining()
-						{ return &m_aBRecv[m_iBRecv]; }
+	void			Receive();
 
-	bool			FTryReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
-	bool			FMustReceiveMessage(MSGK msgk, u32 dMsTimeout = s_dMsTimeoutDefault);
-	bool			FTrySkipMessage(u32 dMsTimeout = s_dMsTimeoutDefault);
+	const SSsm *	PSsmMessage() const;
 
-	bool			FTryIssuePollRequest();
+	bool			FTryReceiveMessage(SSMCMD ssmcmd, u32 dMsTimeout = s_dMsTimeoutDefault);
 
 	void			FlushIncoming();
 
 	void			ProcessParamValue(PARAM param, u32 nValue);
 
-	TACTRIXS		m_tactrixs;						// Current state
-	u32				m_msPollingStart;				// Timestamp when polling started
+	CNXNS			m_cnxns;						// Connection state
+	RCVS			m_rcvs;							// Receive state
 	u8				m_aBRecv[4096];					// Receive buffer
-	int				m_cBRecv;						// Total bytes in receive buffer
-	int				m_iBRecv;						// Index of remaining data in receive buffer
-	int				m_iBRecvPrev;					// Index of last message in receive buffer
+	u32				m_cBRecv;						// Total bytes in receive buffer
+	u32				m_msReceive;					// Timestamp when data last received
 	int				m_cBParamPoll;					// Total number of bytes (addresses) being polled
 	float			m_mpParamGValue[PARAM_Max];		// Latest values obtained from ECU
 };
 
-void CTactrix::SendCommand(const u8 * aB, u16 cB)
+void CConnectionMgr::SendCommand(const u8 * aB, u16 cB)
 {
-	if (!g_userial)
-	{
-		Trace(true, "SendCommand: Can't send, not connected\n");
-		m_tactrixs = TACTRIXS_Disconnected;
-		return;
-	}
-
 	Trace(s_fTraceComms, "Sending ");
 	Trace(s_fTraceComms, cB);
 	Trace(s_fTraceComms, " bytes:\n\"");
@@ -728,7 +672,7 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 
 		Trace(s_fTraceComms, char(b));
 
-		g_userial.write(b);
+		Serial4.write(b);
 	}
 
 	Trace(s_fTraceComms, "\"\n");
@@ -736,446 +680,225 @@ void CTactrix::SendCommand(const u8 * aB, u16 cB)
 	TraceHex(s_fTraceComms, aB, cB);
 }
 
-void CTactrix::SendCommand(const char * pChz)
+void CConnectionMgr::SendCommand(const SSsm * pSsm)
 {
-	SendCommand((const u8 *)pChz, strlen(pChz));
+	SendCommand((const u8 *)pSsm, pSsm->CBPacket());
 }
 
-int CTactrix::CBReceive(u32 dMsTimeout)
+void CConnectionMgr::ResetReceive()
 {
-	ResetReceive();
-
-	if (!g_userial)
-	{
-		Trace(true, "CBReceive: Can't receive, no serial USB device connected\n");
-		m_tactrixs = TACTRIXS_Disconnected;
-		return 0;
-	}
-
-	u32 msStart = millis();
-	for (;;)
-	{
-		m_cBRecv = g_userial.readBytes(m_aBRecv, sizeof(m_aBRecv));
-		if (m_cBRecv > 0)
-		{
-#if DEBUG
-			Trace(s_fTraceComms, "Received ");
-			Trace(s_fTraceComms, m_cBRecv);
-			Trace(s_fTraceComms, " bytes:\n\"");
-			for (int iB = 0; iB < m_cBRecv; ++iB)
-				Trace(s_fTraceComms, char(m_aBRecv[iB]));
-			Trace(s_fTraceComms, "\"\n");
-
-			TraceHex(s_fTraceComms, m_aBRecv, m_cBRecv);
-#endif // DEBUG
-
-			return m_cBRecv;
-		}
-
-		if (dMsTimeout > 0 && millis() - msStart > dMsTimeout)
-			return 0;
-
-		delayMicroseconds(100);
-	}
-}
-
-void CTactrix::ResetReceive()
-{
+	m_rcvs = RCVS_Waiting;
 	m_cBRecv = 0;
-	m_iBRecv = 0;
-	m_iBRecvPrev = 0;
+	m_msReceive = millis();
 }
 
-bool CTactrix::FTryReceiveMessage(const char * pChz, u32 dMsTimeout)
+void CConnectionMgr::Receive()
 {
-	int cCh = strlen(pChz);
+	SSsm * pSsm = (SSsm *)&m_aBRecv[0];
 
-	if (CBRemaining() == 0)
+	while (m_rcvs < RCVS_IncompleteMac)
 	{
-		if (CBReceive(dMsTimeout) == 0)
-		{
-			Trace(true, "FTryReceiveMessage timed out waiting for reply \"");
-			for (int iCh = 0; iCh < cCh; ++iCh)
-				Trace(true, pChz[iCh]);
-			Trace(true, "\"\n");
-			return false;
-		}
-	}
+		if (!Serial4.available())
+			return;
 
-	if (CBRemaining() < cCh ||
-		strncmp((const char *)PBRemaining(), pChz, cCh) != 0)
-	{
-		return false;
-	}
+		u8 b = Serial4.read();
 
-	m_iBRecvPrev = m_iBRecv;
-	m_iBRecv += cCh;
+		Trace(s_fTraceComms, "Recv: ");
+		TraceHex(s_fTraceComms, b);
+		Trace(s_fTraceComms, "\n");
 
-	return true;
-}
-
-bool CTactrix::FMustReceiveMessage(const char * pChz, u32 dMsTimeout)
-{
-	if (!FTryReceiveMessage(pChz, dMsTimeout))
-	{
-		ResetReceive();
+		m_msReceive = millis();
 
 #if DEBUG
-		if (CBRemaining())
+		RCVS rcvsPrev = m_rcvs;
+#endif
+
+		switch (m_rcvs)
 		{
-			Trace(true, "FMustReceiveMessage got unexpected reply (expected \"");
-			int cCh = strlen(pChz);
-			for (int iCh = 0; iCh < cCh; ++iCh)
-				Trace(true, pChz[iCh]);
-			Trace(true, "\")\n");
-		}
-#endif // DEBUG
-
-		return false;
-	}
-
-	return true;
-}
-
-bool CTactrix::FTryReceiveMessage(MSGK msgk, u32 dMsTimeout)
-{
-	if (CBRemaining() == 0)
-	{
-		if (CBReceive(dMsTimeout) == 0)
-		{
-			Trace(true, "Timed out waiting for message type ");
-			Trace(true, s_mpMsgkPChz[msgk]);
-			Trace(true, "\n");
-			return false;
-		}
-	}
-
-	int cBRem = CBRemaining();
-	u8 * pBRem = PBRemaining();
-
-	int cBMsg = 0;
-	switch (msgk)
-	{
-	case MSGK_InfoReply:
-		{
-			if (cBRem < 5 ||
-				pBRem[0] != 'a' ||
-				pBRem[1] != 'r' ||
-				pBRem[2] != 'i')
+		case RCVS_Waiting:
 			{
-				return false;
-			}
-
-			bool fFoundCrLf = false;
-			for (; cBMsg < cBRem - 1; ++cBMsg)
-			{
-				if (pBRem[cBMsg] == '\r' &&
-					pBRem[cBMsg + 1] == '\n')
+				m_cBRecv = 0;
+				if (b == s_bSsmHdr)
 				{
-					cBMsg += 2;
-					fFoundCrLf = true;
-					break;
+					m_aBRecv[0] = b;
+					++m_cBRecv;
+					m_rcvs = RCVS_Header;
 				}
 			}
+			break;
 
-			if (!fFoundCrLf)
-				return false;
-		}
-		break;
-
-	case MSGK_LoopbackStart:
-	case MSGK_Loopback:
-	case MSGK_LoopbackEnd:
-	case MSGK_ReplyStart:
-	case MSGK_Reply:
-	case MSGK_ReplyEnd:
-		{
-			if (cBRem < 6 ||
-				pBRem[0] != 'a' ||
-				pBRem[1] != 'r' ||
-				!isdigit(pBRem[2]) ||
-				pBRem[4] != s_mpMsgkBType[msgk])
+		case RCVS_Header:
 			{
-				return false;
+				ASSERT(m_cBRecv < sizeof(SSsm));
+				m_aBRecv[m_cBRecv] = b;
+				++m_cBRecv;
+				if (m_cBRecv == sizeof(SSsm))
+				{
+					if (pSsm->CBData() == 0)
+						m_rcvs = RCVS_Checksum;
+					else
+						m_rcvs = RCVS_Data;
+				}
 			}
+			break;
 
-			cBMsg = 4 + pBRem[3];
-		}
-		break;
-
-	default:
-		Trace(true, "FTryReceiveMessage called with invalid msgk\n");
-		return false;
-	}
-
-	if (cBMsg > cBRem)
-	{
-		Trace(true, "FTryReceiveMessage received malformed message (cBMsg > cBRem)\n");
-		return false;
-	}
-
-	// Receive succeeded; advance indices
-
-	m_iBRecvPrev = m_iBRecv;
-	m_iBRecv += cBMsg;
-
-	return true;
-}
-
-bool CTactrix::FMustReceiveMessage(MSGK msgk, u32 dMsTimeout)
-{
-	if (!FTryReceiveMessage(msgk, dMsTimeout))
-	{
-		ResetReceive();
-
-		Trace(true, "FMustReceiveMessage failed for message type ");
-		Trace(true, s_mpMsgkPChz[msgk]);
-		Trace(true, "\n");
-
-		return false;
-	}
-
-	return true;
-}
-
-bool CTactrix::FTrySkipMessage(u32 dMsTimeout)
-{
-	if (CBRemaining() == 0)
-	{
-		if (dMsTimeout == 0)
-		{
-			return false;
-		}
-		else if (CBReceive(dMsTimeout) == 0)
-		{
-			Trace(true, "Timed out trying to skip message\n");
-			return false;
-		}
-	}
-
-	// Try each message type until we find one we recognize.
-
-	for (MSGK msgk = MSGK_Min; msgk < MSGK_Max; msgk = MSGK(msgk + 1))
-	{
-		if (FTryReceiveMessage(msgk, 0))
-			return true;
-	}
-
-	return false;
-}
-
-void CTactrix::FlushIncoming()
-{
-	Trace(true, "Flushing incoming data...\n");
-
-	while (g_userial.available())
-	{
-		u8 b = g_userial.read();
-
-		Trace(true, char(b));
-	}
-
-	Trace(true, "FlushIncoming done.\n");
-}
-
-bool CTactrix::FTryConnect()
-{
-	if (m_tactrixs != TACTRIXS_Disconnected)
-	{
-		Disconnect();
-	}
-
-#if !TEST_NO_TACTRIX
-	if (!g_userial)
-	{
-		return false;
-	}
-
-	if (g_userial.idVendor() != s_nIdTactrix ||
-		g_userial.idProduct() != s_nIdOpenPort20)
-	{
-		return false;
-	}
-
-	// Only receive one bulk transfer at a time
-
-	g_userial.setTimeout(0);
-
-	FlushIncoming();
-
-	SendCommand("\r\n\r\nati\r\n");
-	if (!FMustReceiveMessage(MSGK_InfoReply))
-		return false;
-
-	SendCommand("ata 2\r\n");
-	if (!FMustReceiveMessage("aro 2\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruConnect:
-	//	protocol = ISO9141 (3),
-	//	flags = ISO9141_NO_CHECKSUM (0x200 or 512)
-	//	baudrate = 4800
-
-	SendCommand("ato3 512 4800 0 3\r\n");
-	if (!FMustReceiveMessage("aro 3\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = P1_MAX (7) -- maximum inter-byte time for ECU responses in ms (default is 20)
-	//	Value = 2
-
-	SendCommand("ats3 7 2 4\r\n");
-	if (!FMustReceiveMessage("aro 4\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = P3_MIN (0xa or 10) -- minimum time between ECU response and start of new tester request in ms (default is 55)
-	//	Value = 0
-
-	SendCommand("ats3 10 0 5\r\n");
-	if (!FMustReceiveMessage("aro 5\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = P4_MIN (0xc or 12) -- minimum inter-byte time for a tester request in ms (default is 5)
-	//	Value = 0
-
-	SendCommand("ats3 12 0 6\r\n");
-	if (!FMustReceiveMessage("aro 6\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = LOOPBACK (3) -- echo transmitted messages in the receive queue (default is OFF (0))
-	//	Value = ON (1)
-
-	SendCommand("ats3 3 1 7\r\n");
-	if (!FMustReceiveMessage("aro 7\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = DATA_BITS (0x20 or 32)
-	//	Value = 8
-
-	SendCommand("ats3 32 8 8\r\n");
-	if (!FMustReceiveMessage("aro 8\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruIoctl with ioctlID = SET_CONFIG:
-	//	Parameter ID = PARITY (0x16 or 22) -- default is NO_PARITY (0)
-	//	Value = NO_PARITY (0)
-	// BB (jpatry) Redundant?
-
-	SendCommand("ats3 22 0 9\r\n");
-	if (!FMustReceiveMessage("aro 9\r\n"))
-		return false;
-
-	// Equivalent to J2534 PassThruStartMsgFilter:
-	//	FilterType = PASS_FILTER (1)
-	//	pMaskMsg->TxFlags = 0
-	//	pMaskMsg->DataSize = 1
-	//	pMaskMsg->Data = "\0"
-	//	pPatternMsg->Data = "\0"
-	//
-	//	This allows all messages through.
-
-	const u8 aBFilter[] = { "atf3 1 0 1 10\r\n\0\0" };
-	SendCommand(aBFilter, sizeof(aBFilter) - 1);
-	if (!FMustReceiveMessage("arf3 0 10\r\n"))
-		return false;
-#endif // !TEST_NO_TACTRIX
-
-	m_tactrixs = TACTRIXS_Connected;
-
-	return true;
-}
-
-bool CTactrix::FTryStartPolling()
-{
-	if (m_tactrixs != TACTRIXS_Connected)
-		return false;
-
-#if !TEST_NO_TACTRIX
-	// Equivalent to J2534 PassThruWriteMsgs; send SSM init sequence
-
-	const u8 aBSsmInit[] = { "att3 6 0 2000000 11\r\n\x80\x10\xf0\x01\xbf\x40" };
-	SendCommand(aBSsmInit, sizeof(aBSsmInit) - 1);
-#endif // !TEST_NO_TACTRIX
-
-#if !TEST_OFFLINE
-	// Start of loopback message
-
-	if (!FMustReceiveMessage(MSGK_LoopbackStart))
-		return false;
-
-	// Loopback message
-
-	if (!FMustReceiveMessage("ar3\x07 \x80\x10\xf0\x01\xbf\x40"))
-		return false;
-
-	// End of loopback message
-
-	if (!FMustReceiveMessage(MSGK_LoopbackEnd))
-		return false;
-#endif // !TEST_OFFLINE
-
-#if !TEST_NO_TACTRIX
-	// Acknowledgement
-
-	if (!FMustReceiveMessage("aro 11\r\n"))
-		return false;
-#endif // !TEST_NO_TACTRIX
-
-#if !TEST_OFFLINE
-	// Start of normal message
-
-	if (!FMustReceiveMessage(MSGK_ReplyStart))
-		return false;
-
-	{
-		u8 aBSsmInitReply[255];
-		u8 cBSsmInitReply = 0;
-
-		while (!FTryReceiveMessage(MSGK_ReplyEnd))
-		{
-			if (CBRemaining() == 0 || !FMustReceiveMessage(MSGK_Reply))
-				return false;
-
-			const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
-
-			u8 cBPayload = pAr->CBPayload();
-			if (cBSsmInitReply + cBPayload > sizeof(aBSsmInitReply))
+		case RCVS_Data:
 			{
-				Trace(true, "Overflow of SSM init reply buffer\n");
+				ASSERT(m_cBRecv >= sizeof(SSsm));
+				ASSERT(m_cBRecv < sizeof(SSsm) + pSsm->CBData());
+				m_aBRecv[m_cBRecv] = b;
+				++m_cBRecv;
+				if (m_cBRecv == sizeof(SSsm) + pSsm->CBData())
+					m_rcvs = RCVS_Checksum;
+			}
+			break;
+
+		case RCVS_Checksum:
+			{
+				m_aBRecv[m_cBRecv] = b;
+				++m_cBRecv;
+
+				Trace(s_fTraceComms, "Received SSM message:\n");
+				TraceHex(s_fTraceComms, (u8 *)pSsm, pSsm->CBPacket());
+
+				if (pSsm->FVerifyChecksum())
+				{
+					m_rcvs = RCVS_MessageReceived;
+				}
+				else
+				{
+					m_rcvs = RCVS_Error;
+
+					Trace(s_fTraceComms, "INVALID CHECKSUM\n");
+				}
+
+				Trace(s_fTraceComms, "\n");
+
+				return;
+			}
+			break;
+
+		default:
+			ASSERT(false);
+		}
+
+#if DEBUG
+		if (m_rcvs != rcvsPrev)
+		{
+			Trace(s_fTraceComms, "RCVS changed from ");
+			Trace(s_fTraceComms, rcvsPrev);
+			Trace(s_fTraceComms, " to ");
+			Trace(s_fTraceComms, m_rcvs);
+			Trace(s_fTraceComms, "\n");
+		}
+#endif // DEBUG
+	}
+}
+
+const SSsm * CConnectionMgr::PSsmMessage() const
+{
+	if (m_rcvs != RCVS_MessageReceived)
+		return nullptr;
+
+	return (const SSsm *)&m_aBRecv[0];
+}
+
+bool CConnectionMgr::FTryReceiveMessage(SSMCMD ssmcmd, u32 dMsTimeout)
+{
+	for (;;)
+	{
+		Receive();
+		const SSsm * pSsm = PSsmMessage();
+		if (pSsm)
+		{
+			if (pSsm->m_bSrc == SSMID_Ecu &&
+				pSsm->m_bDst == SSMID_Tool &&
+				(ssmcmd == SSMCMD_Any || pSsm->m_bCmd == ssmcmd))
+			{
+				// Matching message found
+
+				Trace(s_fTraceComms, "FTryReceiveMessage() received matching message\n");
+
+				return true;
+			}
+			else
+			{
+				// Wrong kind of message; reset and look for another
+
+				Trace(s_fTraceComms, "FTryReceiveMessage() received wrong message, ignoring...\n");
+
+				ResetReceive();
+			}
+		}
+		else
+		{
+			// Still waiting for a complete message
+
+			if (millis() - m_msReceive >= dMsTimeout)
+			{
+				// Too long since we've received anything
+
+				Trace(s_fTraceComms, "FTryReceiveMessage() timed out\n");
+
 				return false;
 			}
 			else
 			{
-				memcpy(&aBSsmInitReply[cBSsmInitReply], pAr->PBPayload(), cBPayload);
-				cBSsmInitReply += cBPayload;
+				// Wait, then try again
+
+				delayMicroseconds(100);
 			}
 		}
-
-		// BB (jpatry) Validate SSM reply?
-
-		Trace(true, "SSM Init Reply: ");
-		TraceHex(true, aBSsmInitReply, cBSsmInitReply);
-		Trace(true, "\n");
 	}
-#endif // !TEST_OFFLINE
-
-	return FTryIssuePollRequest();
 }
 
-bool CTactrix::FTryIssuePollRequest()
+void CConnectionMgr::FlushIncoming()
 {
-#if !TEST_NO_TACTRIX
+	ResetReceive();
+
+	Trace(true, "Flushing incoming data...\n");
+
+	while (Serial4.available())
+	{
+		u8 b = Serial4.read();
+
+		TraceHex(true, b);
+	}
+
+	Trace(true, "\nFlushIncoming done.\n");
+}
+
+bool CConnectionMgr::FTryStartPolling()
+{
+	if (m_cnxns != CNXNS_Idle)
+		return false;
+
+#if !TEST_OFFLINE
+	FlushIncoming();
+
+	// Send SSM init sequence
+
+	const u8 aBSsmInit[] = { s_bSsmHdr, SSMID_Ecu, SSMID_Tool, 0x01, SSMCMD_EcuInitRequest, 0x40 };
+	SendCommand(aBSsmInit, sizeof(aBSsmInit));
+
+	if (!FTryReceiveMessage(SSMCMD_EcuInitResponse))
+	{
+		Trace(true, "Failed to receive EcuInitResponse message\n");
+
+		return false;
+	}
+
+	// BB (jpatry) Validate SSM reply?
+
+	Trace(true, "SSM Init Reply Received\n");
+
 	// Issue address read request (A8)
 
 	m_cBParamPoll = 0;
 	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
 		m_cBParamPoll += s_mpParamCB[s_aParamPoll[iParamPoll]];
 
-	int cBSsmRead = 7; // header + checksum + PP byte (single response/respond until interrupted)
+	int cBSsmRead = sizeof(SSsm) + 2; // header + checksum + PP byte (single response/respond until interrupted)
 	cBSsmRead += s_cBSsmAddr * m_cBParamPoll;
 
 	if (cBSsmRead > s_cBSsmMax)
@@ -1184,149 +907,69 @@ bool CTactrix::FTryIssuePollRequest()
 		return false;
 	}
 
-	// Equivalent to J2534 PassThruWriteMsgs; format is:
-	//		att<channel> <data size> <TxFlags> <timeout> <id>\r\n<data>
-	//	where data in this case is:
+	// Send SSM packet to start polling:
 	//		0x80, 0x10, 0xf0, <data size - 5>, 0xa8, <PP byte: 0x00 or 0x01>, <address list...>, <checksum>
 	//	PP byte is 0 if data should be sent once or 1 if it should be sent until interrupted.
-	//	J2534 header is at most 23 bytes for this request.
 
-	u8 aBReadRequest[s_cBSsmMax + 23];
-	int cBReadRequest = snprintf(
-							(char *)aBReadRequest,
-							DIM(aBReadRequest),
-							"att3 %d 0 2000000 12\r\n\x80\x10\xf0%c\xa8\x01",
-							cBSsmRead,
-							cBSsmRead - 5);
-	int iSsmStart = cBReadRequest - 6;
+	u8 aBReadRequest[s_cBSsmMax];
+	SSsm * pSsm = (SSsm *)&aBReadRequest[0];
+	pSsm->m_bHdr = s_bSsmHdr;
+	pSsm->m_bDst = SSMID_Ecu;
+	pSsm->m_bSrc = SSMID_Tool;
+	pSsm->m_cB = cBSsmRead - sizeof(SSsm);
+	pSsm->m_bCmd = SSMCMD_AddressReadRequest;
+	pSsm->m_aB[0] = 0x1;	// Continuous polling
+	int iB = 1;
 	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
 	{
 		PARAM param = s_aParamPoll[iParamPoll];
 		u32 nAddr = s_mpParamABAddr[param];
 
-		for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
+		for (int iBRead = 0; iBRead < s_mpParamCB[param]; ++iBRead)
 		{
-			aBReadRequest[cBReadRequest + 0] = (nAddr & 0xff0000) >> 16;
-			aBReadRequest[cBReadRequest + 1] = (nAddr & 0x00ff00) >> 8;
-			aBReadRequest[cBReadRequest + 2] = (nAddr & 0x0000ff);
+			pSsm->m_aB[iB + 0] = (nAddr & 0xff0000) >> 16;
+			pSsm->m_aB[iB + 1] = (nAddr & 0x00ff00) >> 8;
+			pSsm->m_aB[iB + 2] = (nAddr & 0x0000ff);
 			CASSERT(s_cBSsmAddr == 3);
-			cBReadRequest += s_cBSsmAddr;
+			iB += s_cBSsmAddr;
 			nAddr += 1;
 		}
 	}
 
-	aBReadRequest[cBReadRequest] = BSsmChecksum(&aBReadRequest[iSsmStart], cBReadRequest - iSsmStart);
-	++cBReadRequest;
+	ASSERT(pSsm->CBPacket() == cBSsmRead);
 
-	ASSERT(cBReadRequest - iSsmStart == cBSsmRead);
+	*pSsm->PBChecksum() = pSsm->BComputeChecksum();
 
-	SendCommand(aBReadRequest, cBReadRequest);
-#endif // !TEST_NO_TACTRIX
+	FlushIncoming();
 
-#if !TEST_OFFLINE
-	int iBLoopback = iSsmStart;
-
-	while (iBLoopback < cBReadRequest)
-	{
-		if (!FMustReceiveMessage(MSGK_LoopbackStart))
-			return false;
-
-		if (!FMustReceiveMessage(MSGK_Loopback))
-			return false;
-
-		const SJ2534Ar * pArLoopback = (const SJ2534Ar *)PBMessage();
-		int cBLoopbackFrag = pArLoopback->CBPayload();
-		if (iBLoopback + cBLoopbackFrag > cBReadRequest ||
-			memcmp(&aBReadRequest[iBLoopback], pArLoopback->PBPayload(), cBLoopbackFrag) != 0)
-		{
-			Trace(true, "Loopback error\n");
-			return false;
-		}
-
-		iBLoopback += cBLoopbackFrag;
-
-		if (!FMustReceiveMessage(MSGK_LoopbackEnd))
-			return false;
-	}
+	SendCommand(pSsm);
 #endif // !TEST_OFFLINE
 
-#if !TEST_NO_TACTRIX
-	if (!FMustReceiveMessage("aro 12\r\n"))
-		return false;
-#endif // !TEST_NO_TACTRIX
-
-	m_tactrixs = TACTRIXS_Polling;
-	m_msPollingStart = millis();
+	m_cnxns = CNXNS_Polling;
 
 	return true;
 }
 
-bool CTactrix::FTryUpdatePolling()
+bool CConnectionMgr::FTryUpdatePolling()
 {
-	if (m_tactrixs != TACTRIXS_Polling)
+	if (m_cnxns != CNXNS_Polling)
 		return false;
-
-#if !TEST_NO_TACTRIX
-	if (!g_userial)
-		return false;
-#endif // !TEST_NO_TACTRIX
 
 	u32 msCur = millis();
 
 #if !TEST_OFFLINE
-	bool fReceivedReply = false;
-	for (int i = 0; i < 10; ++i)
+	static const int s_dMsReplyStartTimeout = 300;
+	if (!FTryReceiveMessage(SSMCMD_AddressReadResponse, s_dMsReplyStartTimeout))
 	{
-		static const int s_dMsReplyStartTimeout = 300;
-		if (FTryReceiveMessage(MSGK_ReplyStart, s_dMsReplyStartTimeout))
-		{
-			if (FMustReceiveMessage(MSGK_Reply))
-			{
-				const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
-				const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
-				if (pSsm->m_bHdr == 0x80 &&
-					pSsm->m_bDst == SSMID_Tool &&
-					pSsm->m_bSrc == SSMID_Ecu &&
-					pSsm->m_bCmd == SSMCMD_AddressReadResponse &&
-					pSsm->FVerifyChecksum())
-				{
-					fReceivedReply = true;
-					break;
-				}
-			}
-		}
-		else
-		{
-			if (m_cBRecv == 0)
-			{
-				Trace(true, "Timed out while waiting to receive AddressReadResponse message\n");
+		// &&& Decouple update from SSM polling? AFR and display can update at a faster rate, probably.
+		// &&& Should drain recv queue, there may be multiple messages
 
-				// Try to re-issue request
-
-				if (!FTryIssuePollRequest())
-					return false;
-			}
-			else
-			{
-				// Try to skip message
-
-				if (!FTrySkipMessage(0))
-					ResetReceive();	// last resort
-			}
-		}
-	}
-
-	if (!fReceivedReply)
-	{
-		Trace(true, "Failed to received AddressReadResponse message after 10 tries\n");
+		Trace(true, "Failed to receive AddressReadResponse message\n");
 		return false;
 	}
 
-	const SJ2534Ar * pAr = (const SJ2534Ar *)PBMessage();
-	const SSsm * pSsm = (const SSsm *)pAr->PBPayload();
+	const SSsm * pSsm = PSsmMessage();
 	const u8 * pBData = pSsm->PBData();
-
-	// BB (jpatry) TODO: Handle replies split over multiple messages
 
 	if (pSsm->CBData() != m_cBParamPoll)
 	{
@@ -1348,6 +991,12 @@ bool CTactrix::FTryUpdatePolling()
 
 		ProcessParamValue(param, nValue);
 	}
+
+	// Done with SSM data, reset
+
+	ResetReceive();
+	pSsm = nullptr;
+	pBData = nullptr;
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
 	m_mpParamGValue[PARAM_AtmPres] = 14.7f;
@@ -1467,13 +1116,6 @@ bool CTactrix::FTryUpdatePolling()
 		}
 	}
 
-#if !TEST_OFFLINE
-	ASSERT(pBData - pSsm->PBData() == pSsm->CBData());
-
-	if (!FMustReceiveMessage(MSGK_ReplyEnd))
-		return false;
-#endif // !TEST_OFFLINE
-
 	// Update log
 
 	SLogEntry logent;
@@ -1485,12 +1127,12 @@ bool CTactrix::FTryUpdatePolling()
 	return true;
 }
 
-float CTactrix::GParam(PARAM param) const
+float CConnectionMgr::GParam(PARAM param) const
 {
 	return m_mpParamGValue[param];
 }
 
-void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
+void CConnectionMgr::ProcessParamValue(PARAM param, u32 nValue)
 {
 	union
 	{
@@ -1573,30 +1215,14 @@ void CTactrix::ProcessParamValue(PARAM param, u32 nValue)
 	m_mpParamGValue[param] = ng.m_g;
 }
 
-void CTactrix::Disconnect()
+void CConnectionMgr::Disconnect()
 {
 	ResetReceive();
 
-	if (m_tactrixs == TACTRIXS_Connected)
-	{
-		// Equivalent to J2534 PassThruStopMsgFilter
-
-		SendCommand("atk3 0 12\r\n");
-		(void) FMustReceiveMessage("aro 12\r\n");
-
-		// Equivalent to J2534 PassThruDisconnect
-
-		SendCommand("atc3 13\r\n");
-		(void) FMustReceiveMessage("aro 13\r\n");
-	}
-
-	SendCommand("atz 14\r\n");
-	(void) FMustReceiveMessage("aro 14\r\n");
-
-	m_tactrixs = TACTRIXS_Disconnected;
+	m_cnxns = CNXNS_Idle;
 }
 
-CTactrix g_tactrix;
+CConnectionMgr g_cnxnmgr;
 
 
 
@@ -2024,7 +1650,7 @@ void SNvram::Read()
 		return;
 	}
 
-	u8 * aB = reinterpret_cast<u8 *>(this);
+	u8 * aB = (u8 *)this;
 	for (int iB = 0; iB < sizeof(*this); ++iB)
 	{
 		aB[iB] = EEPROM.read(sizeof(u32) + iB);
@@ -2046,7 +1672,7 @@ void SNvram::Write()
 		EEPROM.update(iB, u.m_aB[iB]);
 	}
 
-	u8 * aB = reinterpret_cast<u8 *>(this);
+	u8 * aB = (u8 *)this;
 	for (int iB = 0; iB < sizeof(*this); ++iB)
 	{
 		EEPROM.update(sizeof(u32) + iB, aB[iB]);
@@ -2075,6 +1701,17 @@ void setup()
     Serial.print("This is free software, and you are welcome to redistribute it\n");
     Serial.print("under certain conditions. For details see\n");
 	Serial.print("https://github.com/jasminpatry/boostino/blob/master/COPYING\n\n");
+
+	Trace(true, "Initialize Serial4\n");
+	Serial4.begin(4800, SERIAL_8N1);
+
+	while (!Serial4)
+	{
+		Trace(true, "Waiting for Serial4\n");
+		delay(1000);
+	}
+
+	Trace(true, "Serial4 initialized\n");
 
 	// Initialize Serial5 (for reading AFR). Innovate LC-2 outputs 0-5V RS-232 serial; using a voltage divider (2.2K and
 	//	3.3K) to step down to 0-3V, and specifying RXINV since TTL and RS-232 serial are inverted. TX is unused and
@@ -2154,10 +1791,6 @@ void setup()
 		Serial.println("SD card failed, or not present");
 	}
 
-	// Initialize USB host interface
-
-	g_uhost.begin();
-
 	// Teensy has 13-bit ADC (defaults to 10-bit to be Arduino-compatible)
 
 	analogReadResolution(s_cBitAnalog);
@@ -2180,10 +1813,6 @@ void setup()
 void loop()
 {
 	g_clock.Update();
-
-	// Update USB
-
-	g_uhost.Task();
 
 	// Flip buffers
 
@@ -2237,35 +1866,6 @@ void loop()
 		Trace(true, "\n");
 	}
 
-	if (g_userial != g_fUserialActive)
-	{
-		if (g_fUserialActive)
-		{
-			Serial.print("*** Device - disconnected ***\n");
-			g_fUserialActive = false;
-		}
-		else
-		{
-			Serial.printf("*** Device %x:%x - connected ***\n", g_userial.idVendor(), g_userial.idProduct());
-			g_fUserialActive = true;
-
-			const u8 * pChz = g_userial.manufacturer();
-			if (pChz && *pChz)
-				Serial.printf("  manufacturer: %s\n", pChz);
-
-			pChz = g_userial.product();
-			if (pChz && *pChz)
-				Serial.printf("  product: %s\n", pChz);
-
-			pChz = g_userial.serialNumber();
-			if (pChz && *pChz)
-				Serial.printf("  Serial: %s\n", pChz);
-
-			static const int s_nUsbBaud = 115200;
-			g_userial.begin(s_nUsbBaud);
-		}
-	}
-
 	// Check for screen brightness inputs
 
 	if (fTouchRelease && abs(g_xTouch - 160) <= 30)
@@ -2290,41 +1890,21 @@ void loop()
 		}
 	}
 
-#if !TEST_NO_TACTRIX
-	if (!g_fUserialActive)
-	{
-		if (msCur > s_msSplashMax)
-			DisplayStatus("Connect to Tactrix");
-	}
-	else
-#endif // !TEST_NO_TACTRIX
-	if (g_tactrix.Tactrixs() == TACTRIXS_Disconnected)
-	{
-		if (msCur > s_msSplashMax)
-			DisplayStatus("Connecting...");
-
-		if (!g_tactrix.FTryConnect())
-		{
-			g_tactrix.Disconnect();
-			delay(s_dMsTimeoutDefault);
-		}
-	}
-
-	if (g_tactrix.Tactrixs() == TACTRIXS_Connected)
+	if (g_cnxnmgr.Cnxns() == CNXNS_Idle)
 	{
 		if (msCur > s_msSplashMax)
 			DisplayStatus("Polling ECU...");
 
-		if (!g_tactrix.FTryStartPolling())
+		if (!g_cnxnmgr.FTryStartPolling())
 		{
-			g_tactrix.Disconnect();
+			g_cnxnmgr.Disconnect();
 			delay(s_dMsTimeoutDefault);
 		}
 	}
 
-	if (g_tactrix.Tactrixs() == TACTRIXS_Polling)
+	if (g_cnxnmgr.Cnxns() == CNXNS_Polling)
 	{
-		if (g_tactrix.FTryUpdatePolling())
+		if (g_cnxnmgr.FTryUpdatePolling())
 		{
 			// Update data, handle touch events, draw gauge and log if necessary
 
@@ -2337,7 +1917,7 @@ void loop()
 			if (fTouchRelease && g_xTouch >= 245 && g_yTouch >= 195)
 				s_gBoostMax = -1000.0f;
 
-			float gBoost = g_tactrix.GParam(PARAM_BoostPsi);
+			float gBoost = g_cnxnmgr.GParam(PARAM_BoostPsi);
 			s_gBoostMax = max(gBoost, s_gBoostMax);
 
 			static float s_degFbkcAnyMin = 0.0f;
@@ -2345,8 +1925,8 @@ void loop()
 			static float s_degFbkcPrev = 0.0f;
 			static u32 s_msFbkcEventLast = 0;
 			static int s_cFbkcEvent = 0;
-			float degFbkc = g_tactrix.GParam(PARAM_FbkcDeg);
-			float gLoad = g_tactrix.GParam(PARAM_LoadGPerRev);
+			float degFbkc = g_cnxnmgr.GParam(PARAM_FbkcDeg);
+			float gLoad = g_cnxnmgr.GParam(PARAM_LoadGPerRev);
 
 			// Check for min FBKC reset event
 
@@ -2379,7 +1959,7 @@ void loop()
 
 			static float s_degFlkcMin = 1000.0f;
 			static u32 s_msFlkcEventLast = 0;
-			float degFlkc = g_tactrix.GParam(PARAM_FlkcDeg);
+			float degFlkc = g_cnxnmgr.GParam(PARAM_FlkcDeg);
 			s_degFlkcMin = min(degFlkc, s_degFlkcMin);
 			if (degFlkc < 0.0f)
 				s_msFlkcEventLast = msCur;
@@ -2400,7 +1980,7 @@ void loop()
 					s_uIamMin = 1.0f;
 			}
 
-			float uIam = g_tactrix.GParam(PARAM_Iam);
+			float uIam = g_cnxnmgr.GParam(PARAM_Iam);
 			s_uIamMin = min(uIam, s_uIamMin);
 
 			// Check if doing a WOT pull
@@ -2409,13 +1989,13 @@ void loop()
 			CASSERT(s_cWotThreshold < s_cEntryLogHistory);
 
 			static int s_cWot = 0;
-			float gThrottlePct = g_tactrix.GParam(PARAM_ThrottlePct);
+			float gThrottlePct = g_cnxnmgr.GParam(PARAM_ThrottlePct);
 			if (gThrottlePct > 95.0f)
 				++s_cWot;
 			else
 				s_cWot = 0;
 
-			float gSpeedMph = g_tactrix.GParam(PARAM_SpeedMph);
+			float gSpeedMph = g_cnxnmgr.GParam(PARAM_SpeedMph);
 
 			// Write to log if WOT for long enough, or if min IAM < 1 or a knock event happened recently
 
@@ -2541,7 +2121,7 @@ void loop()
 			{
 				// Draw AFR and align at decimal point
 
-				float gAfr = g_tactrix.GParam(PARAM_WidebandAfr);
+				float gAfr = g_cnxnmgr.GParam(PARAM_WidebandAfr);
 
 				// Clamp at 19.9 because we don't have room for 2x.x
 
@@ -2563,7 +2143,7 @@ void loop()
 			{
 				// Draw IAT
 
-				float gIatF = g_tactrix.GParam(PARAM_IatF);
+				float gIatF = g_cnxnmgr.GParam(PARAM_IatF);
 				snprintf(aChz, DIM(aChz), "%d", int(roundf(gIatF)));
 				g_pCnvs->setCursor(51 - g_pCnvs->strPixelLen(aChz), 214);
 				g_pCnvs->print(aChz);
@@ -2659,24 +2239,29 @@ void loop()
 			if (msCur > s_msSplashMax)
 				DisplayStatus("Polling Error");
 
-			g_tactrix.Disconnect();
+			g_cnxnmgr.Disconnect();
 			delay(s_dMsTimeoutDefault);
 		}
 	}
 	else
 	{
-		if (g_userial.available())
+#if DEBUG
+		if (Serial4.available())
 		{
 			Serial.print("Unhandled serial data: ");
-			while (g_userial.available())
+			while (Serial4.available())
 			{
-				Serial.write(g_userial.read());
+				Serial.print(Serial4.read(), HEX);
+				Serial.write(' ');
 			}
 			Serial.println();
 		}
+#endif // DEBUG
 	}
 
+#if DEBUG
 	Serial.flush();
+#endif // DEBUG
 
 	g_scrnfdr.Update();
 
