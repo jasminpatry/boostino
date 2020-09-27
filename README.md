@@ -30,12 +30,12 @@ This project was built using the following hardware:
 * [Molex Micro-Fit 3.0 plug](https://www.amazon.com/gp/product/B078Q798L9/) for connecting to the LC-2 serial output (optional; only necessary for AFR display and logging)
 * [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
 * [Elcoho 10 Pieces Plastic Waterproof Boxes Junction Case Compatible with Electronic Project 3.94 × 2.36 × 0.98 Inches, Black](https://www.amazon.com/gp/product/B07G8S6XLV/)
-* Protoboard; I used a board from [this set](https://www.amazon.com/gp/product/B074X2GDH2), trimmed to fit, but any protoboard should work fine.
+* Protoboard; I used a board from [this set](https://www.amazon.com/gp/product/B074X2GDH2), trimmed to fit, but any protoboard should work fine. Alternatively, you can print a PCB using the files in the KiCad/boostino.gerber directory (I used [BasicPCB](https://www.basicpcb.com/)'s ValueSpec option).
 * For the faceplate, I had [faceplate.eps](../master/faceplate.eps) laser-cut by https://www.ponoko.com/ using:
     * Acrylic - Two Color - Brushed Silver on Black
     * 0.059 inches thick
     * P1 - 7.126 inches long x 7.126 inches wide
-* Miscellaneous cables, headers, wires, screws & nuts, etc. 
+* Miscellaneous cables, headers, resistors, wires, screws & nuts, etc.
 
 # Donate
 
