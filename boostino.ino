@@ -1060,7 +1060,7 @@ bool CConnectionMgr::FTryUpdatePolling()
 	m_mpParamGValue[PARAM_LoadGPerRev] = GParam(PARAM_Maf) * 60.0f / max(GParam(PARAM_Rpm), 1.0f);
 	m_mpParamGValue[PARAM_IdcPct] = GParam(PARAM_Rpm) * GParam(PARAM_IpwMs) * (1.0f / 1200.0f);
 
-	// Update wideband AFR (serial connection). Innovate LC-2 use LC-1/"new AFR" sub-packets described here:
+	// Update wideband AFR (serial connection). Innovate LC-2 uses LC-1/"new AFR" sub-packets described here:
 	//  https://www.innovatemotorsports.com/support/downloads/Seriallog-2.pdf and
 	//  https://www.innovatemotorsports.com/support/manual/OT-2%20SDK.pdf
 
