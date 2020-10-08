@@ -440,8 +440,6 @@ enum SSMCMD : u8
 	SSMCMD_AddressWriteRequest	= 0xb8,
 	SSMCMD_EcuInitRequest		= 0xbf,
 	SSMCMD_EcuInitResponse		= 0xff,
-
-	SSMCMD_Any					= 0x00,	// For use by FTryReceiveMessage, matches any command byte &&& remove
 };
 
 
@@ -581,7 +579,7 @@ static const float s_rAnalog = 1.0f / ((1 << s_cBitAnalog) - 1);
 
 
 
-static const u32 s_dMsTimeoutDefault = 2000; // &&& make this smaller?
+static const u32 s_dMsTimeoutDefault = 500;
 
 
 
@@ -601,7 +599,8 @@ public:
 					  m_rcvs(RCVS_Waiting),
 					  m_aBRecv(),
 					  m_cBRecv(0),
-					  m_msReceive(0),
+					  m_msRecv(0),
+					  m_msReadResponse(0),
 					  m_cBParamPoll(0),
 					  m_mpParamGValue()
 						{ ; }
@@ -652,10 +651,11 @@ protected:
 	void			ProcessParamValue(PARAM param, u32 nValue);
 
 	CNXNS			m_cnxns;						// Connection state
-	RCVS			m_rcvs;							// Receive state
-	u8				m_aBRecv[4096];					// Receive buffer
-	u32				m_cBRecv;						// Total bytes in receive buffer
-	u32				m_msReceive;					// Timestamp when data last received
+	RCVS			m_rcvs;							// K-Line receive state
+	u8				m_aBRecv[4096];					//	... receive buffer
+	u32				m_cBRecv;						// Total bytes in K-Line receive buffer
+	u32				m_msRecv;						// Timestamp when data last received on K-Line
+	u32				m_msReadResponse;				//	... AddressReadResponse
 	int				m_cBParamPoll;					// Total number of bytes (addresses) being polled
 	float			m_mpParamGValue[PARAM_Max];		// Latest values obtained from ECU
 };
@@ -689,7 +689,7 @@ void CConnectionMgr::ResetReceive()
 {
 	m_rcvs = RCVS_Waiting;
 	m_cBRecv = 0;
-	m_msReceive = millis();
+	m_msRecv = millis();
 }
 
 void CConnectionMgr::Receive()
@@ -707,7 +707,7 @@ void CConnectionMgr::Receive()
 		TraceHex(s_fTraceComms, b);
 		Trace(s_fTraceComms, "\n");
 
-		m_msReceive = millis();
+		m_msRecv = millis();
 
 #if DEBUG
 		RCVS rcvsPrev = m_rcvs;
@@ -734,10 +734,20 @@ void CConnectionMgr::Receive()
 				++m_cBRecv;
 				if (m_cBRecv == sizeof(SSsm))
 				{
-					if (pSsm->CBData() == 0)
+					if (pSsm->CBPacket() > s_cBSsmMax)
+					{
+						m_rcvs = RCVS_Error;
+
+						Trace(s_fTraceComms, "ERROR: Received a packet that exceeds maximum size\n");
+					}
+					else if (pSsm->CBData() == 0)
+					{
 						m_rcvs = RCVS_Checksum;
+					}
 					else
+					{
 						m_rcvs = RCVS_Data;
+					}
 				}
 			}
 			break;
@@ -769,7 +779,7 @@ void CConnectionMgr::Receive()
 				{
 					m_rcvs = RCVS_Error;
 
-					Trace(s_fTraceComms, "INVALID CHECKSUM\n");
+					Trace(s_fTraceComms, "ERROR: Invalid checksum\n");
 				}
 
 				Trace(s_fTraceComms, "\n");
@@ -813,7 +823,7 @@ bool CConnectionMgr::FTryReceiveMessage(SSMCMD ssmcmd, u32 dMsTimeout)
 		{
 			if (pSsm->m_bSrc == SSMID_Ecu &&
 				pSsm->m_bDst == SSMID_Tool &&
-				(ssmcmd == SSMCMD_Any || pSsm->m_bCmd == ssmcmd))
+				pSsm->m_bCmd == ssmcmd)
 			{
 				// Matching message found
 
@@ -834,7 +844,7 @@ bool CConnectionMgr::FTryReceiveMessage(SSMCMD ssmcmd, u32 dMsTimeout)
 		{
 			// Still waiting for a complete message
 
-			if (millis() - m_msReceive >= dMsTimeout)
+			if (millis() - m_msRecv >= dMsTimeout)
 			{
 				// Too long since we've received anything
 
@@ -958,45 +968,65 @@ bool CConnectionMgr::FTryUpdatePolling()
 	u32 msCur = millis();
 
 #if !TEST_OFFLINE
+	// Local copy of last SSM read response message
+
+	u8 aBReadResponse[s_cBSsmMax];
+	SSsm * pSsmReadResponse = (SSsm *)(&aBReadResponse[0]);
+	bool fReceivedReadResponse = false;
+
+	// Drain the pipe of all accumulated messages
+
+	static const u32 s_dMsTimeoutReadResponse = 10;
+	while (FTryReceiveMessage(SSMCMD_AddressReadResponse, (fReceivedReadResponse) ? 0 : s_dMsTimeoutReadResponse))
+	{
+		const SSsm * pSsm = PSsmMessage();
+		memcpy(pSsmReadResponse, PSsmMessage(), pSsm->CBPacket());
+		fReceivedReadResponse = true;
+		m_msReadResponse = msCur;
+
+		// We've copied the message, so reset so we can start receiving the next one
+
+		ResetReceive();
+	}
+
+	// Check if we've timed out
+
 	static const int s_dMsReplyStartTimeout = 300;
-	if (!FTryReceiveMessage(SSMCMD_AddressReadResponse, s_dMsReplyStartTimeout))
+	if (msCur - m_msReadResponse > s_dMsReplyStartTimeout)
 	{
-		// &&& Decouple update from SSM polling? AFR and display can update at a faster rate, probably.
-		// &&& Should drain recv queue, there may be multiple messages
-
-		Trace(true, "Failed to receive AddressReadResponse message\n");
+		Trace(true, "Timed out waiting to receive AddressReadResponse message\n");
 		return false;
 	}
 
-	const SSsm * pSsm = PSsmMessage();
-	const u8 * pBData = pSsm->PBData();
-
-	if (pSsm->CBData() != m_cBParamPoll)
+	if (fReceivedReadResponse)
 	{
-		Trace(true, "Received incorrect number of bytes in AddressReadResponse\n");
-		return false;
-	}
+		const u8 * pBData = pSsmReadResponse->PBData();
 
-	for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
-	{
-		PARAM param = s_aParamPoll[iParamPoll];
-
-		int nValue = 0;
-		for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
+		if (pSsmReadResponse->CBData() != m_cBParamPoll)
 		{
-			nValue <<= 8;
-			nValue |= *pBData;
-			++pBData;
+			Trace(true, "Received incorrect number of bytes in AddressReadResponse\n");
+			return false;
 		}
 
-		ProcessParamValue(param, nValue);
+		for (int iParamPoll = 0; iParamPoll < s_cParamPoll; ++iParamPoll)
+		{
+			PARAM param = s_aParamPoll[iParamPoll];
+
+			int nValue = 0;
+			for (int iB = 0; iB < s_mpParamCB[param]; ++iB)
+			{
+				nValue <<= 8;
+				nValue |= *pBData;
+				++pBData;
+			}
+
+			ProcessParamValue(param, nValue);
+		}
+
+		// Done with SSM data
+
+		pSsmReadResponse = nullptr;
 	}
-
-	// Done with SSM data, reset
-
-	ResetReceive();
-	pSsm = nullptr;
-	pBData = nullptr;
 #else // TEST_OFFLINE
 	// Dummy boost values to test gauge
 	m_mpParamGValue[PARAM_AtmPres] = 14.7f;
