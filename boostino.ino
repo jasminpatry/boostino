@@ -64,6 +64,8 @@ CASSERT(sizeof(void *) == 4);	//	...
 
 static const float s_gPi = 3.14159265f;
 
+#define KLINE Serial3
+
 
 
 // Available ECU parameters
@@ -672,7 +674,7 @@ void CConnectionMgr::SendCommand(const u8 * aB, u16 cB)
 
 		Trace(s_fTraceComms, char(b));
 
-		Serial4.write(b);
+		KLINE.write(b);
 	}
 
 	Trace(s_fTraceComms, "\"\n");
@@ -698,10 +700,10 @@ void CConnectionMgr::Receive()
 
 	while (m_rcvs < RCVS_IncompleteMac)
 	{
-		if (!Serial4.available())
+		if (!KLINE.available())
 			return;
 
-		u8 b = Serial4.read();
+		u8 b = KLINE.read();
 
 		Trace(s_fTraceComms, "Recv: ");
 		TraceHex(s_fTraceComms, b);
@@ -868,9 +870,9 @@ void CConnectionMgr::FlushIncoming()
 
 	Trace(true, "Flushing incoming data...\n");
 
-	while (Serial4.available())
+	while (KLINE.available())
 	{
-		u8 b = Serial4.read();
+		u8 b = KLINE.read();
 
 		TraceHex(true, b);
 	}
@@ -1258,7 +1260,7 @@ CConnectionMgr g_cnxnmgr;
 
 // Touchscreen Configuration
 
-static const int s_nPinTouchCs = 8;
+static const int s_nPinTouchCs = 6;
 static const int s_nPinTouchIrq = 2;
 
 // Calibration data for the raw touch data to the screen coordinates
@@ -1732,16 +1734,16 @@ void setup()
     Serial.print("under certain conditions. For details see\n");
 	Serial.print("https://github.com/jasminpatry/boostino/blob/master/COPYING\n\n");
 
-	Trace(true, "Initialize Serial4\n");
-	Serial4.begin(4800, SERIAL_8N1);
+	Trace(true, "Initialize KLINE\n");
+	KLINE.begin(4800, SERIAL_8N1);
 
-	while (!Serial4)
+	while (!KLINE)
 	{
-		Trace(true, "Waiting for Serial4\n");
+		Trace(true, "Waiting for KLINE\n");
 		delay(1000);
 	}
 
-	Trace(true, "Serial4 initialized\n");
+	Trace(true, "KLINE initialized\n");
 
 	// Initialize Serial5 (for reading AFR). Innovate LC-2 outputs 0-5V RS-232 serial; using a voltage divider (2.2K and
 	//	3.3K) to step down to 0-3V, and specifying RXINV since TTL and RS-232 serial are inverted. TX is unused and
@@ -2276,12 +2278,12 @@ void loop()
 	else
 	{
 #if DEBUG
-		if (Serial4.available())
+		if (KLINE.available())
 		{
-			Serial.print("Unhandled serial data: ");
-			while (Serial4.available())
+			Serial.print("Unhandled K-Line data: ");
+			while (KLINE.available())
 			{
-				Serial.print(Serial4.read(), HEX);
+				Serial.print(KLINE.read(), HEX);
 				Serial.write(' ');
 			}
 			Serial.println();
