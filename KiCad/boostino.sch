@@ -128,9 +128,9 @@ Wire Wire Line
 Wire Wire Line
 	8950 2750 9800 2750
 Wire Wire Line
-	1850 5100 1850 5900
+	1450 5100 1450 5900
 Wire Wire Line
-	1850 5900 8850 5900
+	1450 5900 8850 5900
 Wire Wire Line
 	8850 5900 8850 3050
 Wire Wire Line
@@ -337,10 +337,7 @@ NoConn ~ 5250 2800
 NoConn ~ 1050 5100
 NoConn ~ 1150 5100
 NoConn ~ 1350 5100
-NoConn ~ 1450 5100
 NoConn ~ 1550 5100
-NoConn ~ 1650 5100
-NoConn ~ 1750 5100
 NoConn ~ 2450 5100
 NoConn ~ 2550 5100
 NoConn ~ 2850 5100
@@ -391,17 +388,6 @@ $EndComp
 Connection ~ 3300 1300
 Wire Wire Line
 	3300 1300 6000 1300
-$Comp
-L teensy:Teensy3.6 U1
-U 1 1 5E36506E
-P 3100 3950
-F 0 "U1" V 3153 1672 60  0000 R CNN
-F 1 "Teensy3.6" V 3047 1672 60  0000 R CNN
-F 2 "Teensy:Teensy35_36" H 3100 4000 60  0001 C CNN
-F 3 "" H 3100 4000 60  0000 C CNN
-	1    3100 3950
-	0    -1   -1   0   
-$EndComp
 Wire Wire Line
 	4650 2800 4650 2700
 Wire Wire Line
@@ -523,17 +509,6 @@ Connection ~ 3850 7050
 Wire Wire Line
 	3850 7050 3950 7050
 $Comp
-L Device:D D1
-U 1 1 5F78823F
-P 4700 6550
-F 0 "D1" H 4700 6766 50  0000 C CNN
-F 1 "D" H 4700 6675 50  0000 C CNN
-F 2 "Diode_THT:D_A-405_P10.16mm_Horizontal" H 4700 6550 50  0001 C CNN
-F 3 "~" H 4700 6550 50  0001 C CNN
-	1    4700 6550
-	1    0    0    -1  
-$EndComp
-$Comp
 L Device:R R7
 U 1 1 5F78930C
 P 4350 6550
@@ -633,25 +608,19 @@ Wire Wire Line
 Wire Wire Line
 	5000 6550 5000 6900
 Wire Wire Line
-	2750 5100 2750 5450
+	1850 5100 1850 6250
 Wire Wire Line
-	2750 5450 2950 5450
-Wire Wire Line
-	2650 5100 2650 5450
-Wire Wire Line
-	2650 5450 2450 5450
-Text Label 2800 5450 0    50   ~ 0
-RX1
-Text Label 2500 5450 0    50   ~ 0
-TX1
+	1850 6250 1600 6250
+Text Label 1800 6250 2    50   ~ 0
+TX3
 Wire Wire Line
 	1100 7050 2150 7050
 Wire Wire Line
 	2150 7200 1100 7200
 Text Label 1200 7050 0    50   ~ 0
-RX1
+RX3
 Text Label 1200 7200 0    50   ~ 0
-TX1
+TX3
 NoConn ~ 2700 7550
 $Comp
 L power:PWR_FLAG #FLG0101
@@ -690,4 +659,35 @@ Wire Wire Line
 Connection ~ 1700 6550
 Wire Wire Line
 	1700 6550 2000 6550
+NoConn ~ 1650 5100
+$Comp
+L Device:D D1
+U 1 1 5F78823F
+P 4700 6550
+F 0 "D1" H 4700 6766 50  0000 C CNN
+F 1 "D" H 4700 6675 50  0000 C CNN
+F 2 "Diode_THT:D_A-405_P10.16mm_Horizontal" H 4700 6550 50  0001 C CNN
+F 3 "~" H 4700 6550 50  0001 C CNN
+	1    4700 6550
+	1    0    0    -1  
+$EndComp
+Text Label 1550 6100 0    50   ~ 0
+RX3
+Wire Wire Line
+	1750 5100 1750 6100
+Wire Wire Line
+	1750 6100 1500 6100
+$Comp
+L teensy:Teensy3.6 U1
+U 1 1 5E36506E
+P 3100 3950
+F 0 "U1" V 3153 1672 60  0000 R CNN
+F 1 "Teensy3.6" V 3047 1672 60  0000 R CNN
+F 2 "Teensy:Teensy35_36" H 3100 4000 60  0001 C CNN
+F 3 "" H 3100 4000 60  0000 C CNN
+	1    3100 3950
+	0    -1   -1   0   
+$EndComp
+NoConn ~ 2650 5100
+NoConn ~ 2750 5100
 $EndSCHEMATC
