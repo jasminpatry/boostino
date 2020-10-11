@@ -1,5 +1,5 @@
 # BooSTIno
-A Teensy 3.6/Tactrix OP 2.0 logger and gauge for my 2014 Subaru STI.
+A Teensy 3.6-based logger and gauge for my 2014 Subaru STI.
 
 Photo of current version:
 
@@ -25,17 +25,22 @@ This project is built as an Arduino sketch. I used Arduino 1.8.8, but later vers
 This project was built using the following hardware:
 
 * [Teensy 3.6](https://www.pjrc.com/store/teensy36.html)
-* [Tactrix OpenPort 2.0](https://www.tactrix.com/index.php?option=com_virtuemart&page=shop.product_details&product_id=17&vmcchk=1&Itemid=53&redirected=1&Itemid=53)
+* MC33660 K-line serial interface (I purchased mine from [eBay](https://www.ebay.com/itm/10PCS-MC33660-MC33660EF-SOP-8/292559702234))
+* Custom PCB fabricated using the files in the [KiCad/boostino.gerber](KiCad/boostino.gerber) directory (I used [BasicPCB](https://www.basicpcb.com/)'s ValueSpec option, which in 2020 cost me about $30 for 3 boards).
+* [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
+* [OBD-2 cable](https://www.amazon.com/gp/product/B01ETRINYO/ref=ppx_yo_dt_b_search_asin_title?ie=UTF8&psc=1) &mdash; the switch and DB9 connector in the linked cable aren't necessary (I snipped them off), but the DB9 connector was useful when prototyping.
 * [Innovate Motorsports (3877) LC-2 Digital Wideband Lambda Controller Kit with Bosch LSU 4.9 O2 Sensor](https://www.amazon.com/Innovate-Motorsports-Digital-Wideband-Controller/dp/B00FFTAJPC/) (optional; only necessary for AFR display and logging)
 * [Molex Micro-Fit 3.0 plug](https://www.amazon.com/gp/product/B078Q798L9/) for connecting to the LC-2 serial output (optional; only necessary for AFR display and logging)
-* [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
 * [Elcoho 10 Pieces Plastic Waterproof Boxes Junction Case Compatible with Electronic Project 3.94 × 2.36 × 0.98 Inches, Black](https://www.amazon.com/gp/product/B07G8S6XLV/)
-* Protoboard; I used a board from [this set](https://www.amazon.com/gp/product/B074X2GDH2), trimmed to fit, but any protoboard should work fine. Alternatively, you can print a PCB using the files in the KiCad/boostino.gerber directory (I used [BasicPCB](https://www.basicpcb.com/)'s ValueSpec option).
-* For the faceplate, I had [faceplate.eps](../master/faceplate.eps) laser-cut by https://www.ponoko.com/ using:
+* For the faceplate, I had [faceplate.eps](faceplate.eps) laser-cut by https://www.ponoko.com/ using:
     * Acrylic - Two Color - Brushed Silver on Black
     * 0.059 inches thick
     * P1 - 7.126 inches long x 7.126 inches wide
-* Miscellaneous cables, headers, resistors, wires, screws & nuts, etc.
+* Miscellaneous cables, headers, resistors, capacitors, diodes, wires, screws & nuts, etc.
+
+# Tactrix Version
+
+A previous version of this project used the [Tactrix OpenPort 2.0](https://www.tactrix.com/index.php?option=com_virtuemart&page=shop.product_details&product_id=17&vmcchk=1&Itemid=53&redirected=1&Itemid=53) to communicate with the ECU. That version is available in the [Tactrix](../../tree/Tactrix/) branch.
 
 # Donate
 
