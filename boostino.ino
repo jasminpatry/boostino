@@ -30,7 +30,7 @@
 
 // Set to 1 to enable verbose logging.
 
-#define DEBUG 1
+#define DEBUG 0
 
 static const bool s_fTraceComms = true;
 static const bool s_fTraceTouch = false;
