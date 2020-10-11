@@ -28,7 +28,7 @@ This project was built using the following hardware:
 * MC33660 K-line serial interface (I purchased mine from [eBay](https://www.ebay.com/itm/10PCS-MC33660-MC33660EF-SOP-8/292559702234))
 * Custom PCB fabricated using the files in the [KiCad/boostino.gerber](KiCad/boostino.gerber) directory (I used [BasicPCB](https://www.basicpcb.com/)'s ValueSpec option, which in 2020 cost me about $30 for 3 boards).
 * [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
-* [OBD-2 cable](https://www.amazon.com/gp/product/B01ETRINYO/ref=ppx_yo_dt_b_search_asin_title?ie=UTF8&psc=1) &mdash; the switch and DB9 connector in the linked cable aren't necessary (I snipped them off), but the DB9 connector was useful when prototyping.
+* [OBD-2 cable](https://www.amazon.com/gp/product/B01ETRINYO/) &mdash; the switch and DB9 connector in the linked cable aren't necessary (I snipped them off), but the DB9 connector was useful when prototyping.
 * [Innovate Motorsports (3877) LC-2 Digital Wideband Lambda Controller Kit with Bosch LSU 4.9 O2 Sensor](https://www.amazon.com/Innovate-Motorsports-Digital-Wideband-Controller/dp/B00FFTAJPC/) (optional; only necessary for AFR display and logging)
 * [Molex Micro-Fit 3.0 plug](https://www.amazon.com/gp/product/B078Q798L9/) for connecting to the LC-2 serial output (optional; only necessary for AFR display and logging)
 * [Elcoho 10 Pieces Plastic Waterproof Boxes Junction Case Compatible with Electronic Project 3.94 × 2.36 × 0.98 Inches, Black](https://www.amazon.com/gp/product/B07G8S6XLV/)
