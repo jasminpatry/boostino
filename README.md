@@ -25,7 +25,7 @@ This project is built as an Arduino sketch. I used Arduino 1.8.8, but later vers
 This project was built using the following hardware:
 
 * [Teensy 3.6](https://www.pjrc.com/store/teensy36.html)
-* MC33660 K-line serial interface (I purchased mine from [eBay](https://www.ebay.com/itm/10PCS-MC33660-MC33660EF-SOP-8/292559702234))
+* MC33660 K-line serial interface chip, SOP-8 package ([datasheet](https://www.nxp.com/docs/en/data-sheet/MC33660.pdf)); I purchased mine from [eBay](https://www.ebay.com/itm/10PCS-MC33660-MC33660EF-SOP-8/292559702234)
 * Custom PCB fabricated using the files in the [KiCad/boostino.gerber](KiCad/boostino.gerber) directory (I used [BasicPCB](https://www.basicpcb.com/)'s ValueSpec option, which in 2020 cost me about $30 for 3 boards).
 * [HiLetgo ILI9341 2.8" SPI TFT LCD Display Touch Panel 240X320 with PCB 5V/3.3V STM32](https://www.amazon.com/gp/product/B073R7BH1B/)
 * [OBD-2 cable](https://www.amazon.com/gp/product/B01ETRINYO/) &mdash; the switch and DB9 connector in the linked cable aren't necessary (I snipped them off), but the DB9 connector was useful when prototyping.
