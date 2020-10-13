@@ -32,7 +32,7 @@
 
 #define DEBUG 0
 
-static const bool s_fTraceComms = true;
+static const bool s_fTraceComms = false;
 static const bool s_fTraceTouch = false;
 
 // Set to 1 to test without being plugged into the vehicle
@@ -1260,7 +1260,10 @@ CConnectionMgr g_cnxnmgr;
 
 // Touchscreen Configuration
 
-static const int s_nPinTouchCs = 6;
+// BB (jpatry) I intended for this to be pin 6, but I accidentally wired up the wrong pin on the PCB (Teensy pin 4 is
+//  pin #6 in the KiCad footprint). This doesn't cause any problems, but Teensy pin 6 would be cleaner.
+
+static const int s_nPinTouchCs = 4;
 static const int s_nPinTouchIrq = 2;
 
 // Calibration data for the raw touch data to the screen coordinates
